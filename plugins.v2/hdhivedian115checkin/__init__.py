@@ -27,7 +27,7 @@ class HDHiveDian115Checkin(_PluginBase):
     plugin_name = "HDHive / Dian115 签到"
     plugin_desc = "仅保留 HDHive 与 Dian115 两个渠道的每日签到、转盘和通知功能。"
     plugin_icon = "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/hdhivedian115checkin.png"
-    plugin_version = "1.0.1"
+    plugin_version = "1.0.3"
     plugin_author = "odomu"
     author_url = "https://github.com/odomu/MoviePilot-Plugins"
     plugin_config_prefix = "hdhive_dian115_checkin_"
@@ -318,204 +318,263 @@ class HDHiveDian115Checkin(_PluginBase):
         )
 
     def _persist_config_values(self, **kwargs) -> None:
+        """基于当前完整配置更新少量运行时值，避免覆盖其它配置项。"""
         try:
-            self.update_config(kwargs)
+            config = dict(self.get_config() or {})
+            config.update(kwargs)
+            self.update_config(config)
         except Exception as error:
             logger.debug(f"持久化 HDHive/Dian115 签到配置失败：{error}")
 
     def get_state(self) -> bool:
         return bool(self._enabled)
 
+    def get_page(self) -> Optional[List[dict]]:
+        """本插件不提供插件详情页面。"""
+        return None
+
+    def get_api(self) -> List[Dict[str, Any]]:
+        """本插件不注册额外的插件 API。"""
+        return []
+
     def get_form(self) -> Tuple[Optional[List[dict]], Dict[str, Any]]:
-        form = [
-            {
-                "type": "details",
-                "content": "仅保留 HDHive 与 Dian115 两个签到渠道；客户端代码可由上游自动同步。",
-            },
-            {
-                "type": "switch",
-                "name": "enabled",
-                "label": "启用插件",
-                "default": True,
-                "help": "关闭后签到调度会停止。",
-            },
-            {
-                "type": "text",
-                "name": "checkin_cron",
-                "label": "每日签到时间（cron）",
-                "default": "0 8 * * *",
-                "required": True,
-                "help": "例如每天 08:00 为 0 8 * * *。",
-            },
-            {
-                "type": "switch",
-                "name": "checkin_notify",
-                "label": "签到后发送通知",
-                "default": True,
-            },
-            {
-                "type": "select",
-                "name": "notification_type",
-                "label": "通知渠道",
-                "default": "Plugin",
-                "options": [
-                    {"value": item.name, "label": item.value or item.name}
-                    for item in NotificationType
-                ],
-            },
-            {
-                "type": "text",
-                "name": "proxy",
-                "label": "HTTP/HTTPS 代理",
-                "default": "",
-                "help": "选填，例如 http://127.0.0.1:7890。",
-            },
-            {"type": "details", "content": "HDHive"},
-            {
-                "type": "switch",
-                "name": "hdhive_checkin_enabled",
-                "label": "启用 HDHive 签到",
-                "default": False,
-            },
-            {
-                "type": "select",
-                "name": "hdhive_query_mode",
-                "label": "HDHive 模式",
-                "default": "web",
-                "options": [
-                    {"value": "web", "label": "WebAPI（账号密码）"},
-                    {"value": "api", "label": "OpenAPI（应用授权）"},
-                ],
-            },
-            {
-                "type": "text",
-                "name": "hdhive_username",
-                "label": "HDHive 用户名",
-                "default": "",
-                "help": "WebAPI 模式必填。",
-            },
-            {
-                "type": "password",
-                "name": "hdhive_password",
-                "label": "HDHive 密码",
-                "default": "",
-                "help": "WebAPI 模式必填。",
-            },
-            {
-                "type": "select",
-                "name": "hdhive_checkin_mode",
-                "label": "HDHive 签到模式",
-                "default": "normal",
-                "options": [
-                    {"value": "normal", "label": "普通签到"},
-                    {"value": "gambler", "label": "赌狗签到"},
-                ],
-            },
-            {
-                "type": "number",
-                "name": "hdhive_request_interval",
-                "label": "HDHive 请求间隔（秒）",
-                "default": 5,
-                "help": "建议保持默认，风控较高时不要调太小。",
-            },
-            {
-                "type": "text",
-                "name": "hdhive_base_url",
-                "label": "HDHive OpenAPI 站点地址",
-                "default": "https://re0.me",
-                "help": "仅 OpenAPI 模式使用。",
-            },
-            {
-                "type": "password",
-                "name": "hdhive_api_key",
-                "label": "HDHive OpenAPI 应用 Secret",
-                "default": "",
-            },
-            {
-                "type": "text",
-                "name": "hdhive_client_id",
-                "label": "HDHive OpenAPI Client ID",
-                "default": "",
-            },
-            {
-                "type": "text",
-                "name": "hdhive_redirect_uri",
-                "label": "HDHive OpenAPI 回调地址",
-                "default": "",
-            },
-            {
-                "type": "select",
-                "name": "hdhive_response_mode",
-                "label": "HDHive 授权回调模式",
-                "default": "redirect",
-                "options": [
-                    {"value": "redirect", "label": "redirect"},
-                    {"value": "postmessage", "label": "postmessage"},
-                ],
-            },
-            {
-                "type": "text",
-                "name": "hdhive_auth_code",
-                "label": "HDHive OpenAPI 授权码",
-                "default": "",
-                "help": "保存后自动换取 Token，成功后会被清空。",
-            },
-            {"type": "details", "content": "Dian115"},
-            {
-                "type": "switch",
-                "name": "dian115_checkin_enabled",
-                "label": "启用 Dian115 签到",
-                "default": False,
-            },
-            {
-                "type": "text",
-                "name": "dian115_email",
-                "label": "Dian115 邮箱",
-                "default": "",
-            },
-            {
-                "type": "password",
-                "name": "dian115_password",
-                "label": "Dian115 密码",
-                "default": "",
-            },
-            {
-                "type": "select",
-                "name": "dian115_checkin_mode",
-                "label": "Dian115 签到模式",
-                "default": "normal",
-                "options": [
-                    {"value": "normal", "label": "普通签到"},
-                    {"value": "lucky", "label": "运气签到"},
-                ],
-            },
-            {
-                "type": "number",
-                "name": "dian115_request_interval",
-                "label": "Dian115 请求间隔（秒）",
-                "default": 1,
-            },
-            {
-                "type": "text",
-                "name": "dian115_base_url",
-                "label": "Dian115 站点地址",
-                "default": "https://m.dian115.com",
-            },
-            {
-                "type": "switch",
-                "name": "dian115_lottery_enabled",
-                "label": "启用 Dian115 转盘",
-                "default": False,
-            },
-            {
-                "type": "number",
-                "name": "dian115_lottery_count",
-                "label": "Dian115 转盘次数",
-                "default": 1,
-                "help": "范围 1-20。",
-            },
+        """
+        拼装插件配置页面，按 MoviePilot V2 插件规范返回 Vuetify 组件配置与默认数据结构。
+        """
+        notification_options = [
+            {"title": item.value or item.name, "value": item.name}
+            for item in NotificationType
         ]
-        return form, {}
+        return [
+            {
+                'component': 'VForm',
+                'content': [
+                    {
+                        'component': 'VCard',
+                        'props': {'class': 'mt-0'},
+                        'content': [
+                            {'component': 'VCardTitle', 'props': {'class': 'd-flex align-center'}, 'content': [
+                                {'component': 'VIcon', 'props': {'color': 'info', 'class': 'mr-2'}, 'text': 'mdi-cog'},
+                                {'component': 'span', 'text': '基础设置'},
+                            ]},
+                            {'component': 'VDivider'},
+                            {'component': 'VCardText', 'content': [
+                                {'component': 'VAlert', 'props': {
+                                    'type': 'info',
+                                    'variant': 'tonal',
+                                    'class': 'mb-3',
+                                    'text': '仅保留 HDHive 与 Dian115 两个签到渠道，支持每日签到、转盘与消息通知。',
+                                }},
+                                {'component': 'VRow', 'content': [
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 3}, 'content': [
+                                        {'component': 'VSwitch', 'props': {
+                                            'model': 'enabled', 'label': '启用插件', 'color': 'primary'}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 3}, 'content': [
+                                        {'component': 'VSwitch', 'props': {
+                                            'model': 'checkin_notify', 'label': '发送通知', 'color': 'info'}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 3}, 'content': [
+                                        {'component': 'VSelect', 'props': {
+                                            'model': 'notification_type', 'label': '通知渠道',
+                                            'items': notification_options}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 3}, 'content': [
+                                        {'component': 'VCronField', 'props': {
+                                            'model': 'checkin_cron', 'label': '签到执行周期',
+                                            'placeholder': '5位 cron 表达式，如 0 8 * * *'}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'proxy', 'label': '代理地址',
+                                            'placeholder': 'http://127.0.0.1:7890', 'clearable': True}},
+                                    ]},
+                                ]},
+                            ]},
+                        ],
+                    },
+                    {
+                        'component': 'VCard',
+                        'props': {'class': 'mt-3'},
+                        'content': [
+                            {'component': 'VCardTitle', 'props': {'class': 'd-flex align-center'}, 'content': [
+                                {'component': 'VIcon', 'props': {'color': 'info', 'class': 'mr-2'}, 'text': 'mdi-web'},
+                                {'component': 'span', 'text': 'HDHive'},
+                            ]},
+                            {'component': 'VDivider'},
+                            {'component': 'VCardText', 'content': [
+                                {'component': 'VRow', 'content': [
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VSwitch', 'props': {
+                                            'model': 'hdhive_checkin_enabled', 'label': '启用 HDHive 签到',
+                                            'color': 'primary'}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VSelect', 'props': {
+                                            'model': 'hdhive_query_mode', 'label': '查询模式',
+                                            'items': [
+                                                {'title': 'WebAPI（账号密码）', 'value': 'web'},
+                                                {'title': 'OpenAPI（应用授权）', 'value': 'api'},
+                                            ]}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VSelect', 'props': {
+                                            'model': 'hdhive_checkin_mode', 'label': '签到模式',
+                                            'items': [
+                                                {'title': '普通签到', 'value': 'normal'},
+                                                {'title': '赌狗签到', 'value': 'gambler'},
+                                            ]}},
+                                    ]},
+                                ]},
+                                {'component': 'VRow', 'content': [
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'hdhive_username', 'label': 'HDHive 用户名',
+                                            'placeholder': 'WebAPI 模式必填', 'clearable': True}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'hdhive_password', 'label': 'HDHive 密码',
+                                            'type': 'password', 'autocomplete': 'new-password',
+                                            'placeholder': 'WebAPI 模式必填'}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'hdhive_request_interval', 'label': '请求间隔（秒）',
+                                            'type': 'number', 'placeholder': '建议保持 5 秒以上'}},
+                                    ]},
+                                ]},
+                                {'component': 'VRow', 'content': [
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'hdhive_base_url', 'label': 'OpenAPI 站点地址',
+                                            'placeholder': 'https://re0.me', 'clearable': True}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'hdhive_api_key', 'label': 'OpenAPI 应用 Secret',
+                                            'type': 'password', 'autocomplete': 'new-password'}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'hdhive_client_id', 'label': 'OpenAPI Client ID',
+                                            'clearable': True}},
+                                    ]},
+                                ]},
+                                {'component': 'VRow', 'content': [
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'hdhive_redirect_uri', 'label': 'OpenAPI 回调地址',
+                                            'clearable': True}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VSelect', 'props': {
+                                            'model': 'hdhive_response_mode', 'label': '授权回调模式',
+                                            'items': [
+                                                {'title': 'redirect', 'value': 'redirect'},
+                                                {'title': 'postmessage', 'value': 'postmessage'},
+                                            ]}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'hdhive_auth_code', 'label': 'OpenAPI 授权码',
+                                            'placeholder': '保存后自动换取 Token', 'clearable': True}},
+                                    ]},
+                                ]},
+                            ]},
+                        ],
+                    },
+                    {
+                        'component': 'VCard',
+                        'props': {'class': 'mt-3'},
+                        'content': [
+                            {'component': 'VCardTitle', 'props': {'class': 'd-flex align-center'}, 'content': [
+                                {'component': 'VIcon', 'props': {'color': 'info', 'class': 'mr-2'}, 'text': 'mdi-cloud-download'},
+                                {'component': 'span', 'text': 'Dian115'},
+                            ]},
+                            {'component': 'VDivider'},
+                            {'component': 'VCardText', 'content': [
+                                {'component': 'VRow', 'content': [
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VSwitch', 'props': {
+                                            'model': 'dian115_checkin_enabled', 'label': '启用 Dian115 签到',
+                                            'color': 'primary'}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'dian115_email', 'label': 'Dian115 邮箱',
+                                            'placeholder': '登录邮箱', 'clearable': True}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'dian115_password', 'label': 'Dian115 密码',
+                                            'type': 'password', 'autocomplete': 'new-password'}},
+                                    ]},
+                                ]},
+                                {'component': 'VRow', 'content': [
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VSelect', 'props': {
+                                            'model': 'dian115_checkin_mode', 'label': '签到模式',
+                                            'items': [
+                                                {'title': '普通签到', 'value': 'normal'},
+                                                {'title': '运气签到', 'value': 'lucky'},
+                                            ]}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'dian115_request_interval', 'label': '请求间隔（秒）',
+                                            'type': 'number'}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'dian115_base_url', 'label': 'Dian115 站点地址',
+                                            'placeholder': 'https://m.dian115.com', 'clearable': True}},
+                                    ]},
+                                ]},
+                                {'component': 'VRow', 'content': [
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VSwitch', 'props': {
+                                            'model': 'dian115_lottery_enabled', 'label': '启用幸运转盘',
+                                            'color': 'warning'}},
+                                    ]},
+                                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [
+                                        {'component': 'VTextField', 'props': {
+                                            'model': 'dian115_lottery_count', 'label': '转盘次数',
+                                            'type': 'number', 'placeholder': '范围 1-20'}},
+                                    ]},
+                                ]},
+                            ]},
+                        ],
+                    },
+                ],
+            }
+        ], {
+            "enabled": True,
+            "checkin_cron": "0 8 * * *",
+            "checkin_notify": True,
+            "notification_type": "Plugin",
+            "proxy": "",
+            "hdhive_checkin_enabled": False,
+            "hdhive_query_mode": "web",
+            "hdhive_username": "",
+            "hdhive_password": "",
+            "hdhive_checkin_mode": "normal",
+            "hdhive_request_interval": 5,
+            "hdhive_base_url": "https://re0.me",
+            "hdhive_api_key": "",
+            "hdhive_client_id": "",
+            "hdhive_redirect_uri": "",
+            "hdhive_response_mode": "redirect",
+            "hdhive_auth_code": "",
+            "dian115_checkin_enabled": False,
+            "dian115_email": "",
+            "dian115_password": "",
+            "dian115_checkin_mode": "normal",
+            "dian115_request_interval": 1,
+            "dian115_base_url": "https://m.dian115.com",
+            "dian115_lottery_enabled": False,
+            "dian115_lottery_count": 1,
+        }
 
     def get_command(self) -> List[Dict[str, Any]]:
         return [

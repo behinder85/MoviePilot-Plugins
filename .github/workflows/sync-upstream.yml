@@ -35,6 +35,9 @@ jobs:
       - name: Sync HDHive / Dian115 client files
         run: python scripts/sync-upstream.py /tmp/MoviePilot-Plugins
 
+      - name: Check plugin conventions
+        run: python scripts/check-plugin.py
+
       - name: Detect changes
         id: changes
         run: |

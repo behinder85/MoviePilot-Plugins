@@ -3,13 +3,15 @@
     "name": "HDHive / Dian115 签到",
     "description": "仅保留上游 MoviePilot-Plugins 中 HDHive 与 Dian115 两个渠道的每日签到、转盘和通知功能。",
     "labels": "签到,HDHive,Dian115",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "icon": "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/hdhivedian115checkin.png",
     "author": "odomu",
     "level": 1,
     "release": true,
     "system_version": ">=2.14.6",
     "history": {
+      "v1.0.3": "修复配置页无法使用：补齐 get_api/get_page 抽象方法，配置表单改用 V2 官方 Vuetify 组件规范并提供默认配置，运行期 Token 持久化改为合并写回",
+      "v1.0.2": "修复插件类缺少 get_api/get_page 抽象方法导致 MoviePilot 无法实例化、配置页报加载失败",
       "v1.0.1": "按官方仓库规范修正插件目录名与索引编码，补充 Release 自动发布流程",
       "v1.0.0": "从 MoviePilot-Plugins 提取 HDHive 与 Dian115 签到能力并重新打包"
     }

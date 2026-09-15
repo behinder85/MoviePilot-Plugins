@@ -21,14 +21,16 @@
 ## 插件配置
 
 - `启用插件`：关闭后签到调度停止。
-- `每日签到时间（cron）`：默认 `0 8 * * *`，即时区为 MoviePilot 的 `TZ`。
-- `签到后发送通知` / `通知渠道`：签到结果通知。
-- `HTTP/HTTPS 代理`：选填，例如 `http://127.0.0.1:7890`。
+- `签到执行周期`：默认 `0 8 * * *`，即时区为 MoviePilot 的 `TZ`。
+- `发送通知` / `通知渠道`：签到结果通知。
+- `代理地址`：选填，例如 `http://127.0.0.1:7890`。
 - HDHive：
-  - `WebAPI` 模式填写用户名和密码。
-  - `OpenAPI` 模式填写应用 Secret、Client ID、回调地址，按日志中的授权链接完成授权后再填入授权码。
-  - `签到模式` 支持普通签到与赌狗签到。
-- Dian115：填写邮箱和密码，可选启用转盘及转盘次数。
+  - `查询模式` 选择 `WebAPI（账号密码）` 时填写用户名和密码。
+  - `查询模式` 选择 `OpenAPI（应用授权）` 时填写应用 Secret、Client ID、回调地址，按日志中的授权链接完成授权后再填入授权码。
+  - `签到模式` 支持普通签到与赌狗签到；`请求间隔（秒）` 会被限制在 2-10 秒，风控较高时不要调小。
+- Dian115：填写邮箱和密码，可选启用幸运转盘及转盘次数。
+
+配置表单按 V2 官方规范使用 `VForm` / `VCard` / `VRow` / `VCol` 组件拼装，`get_form` 同时返回完整的默认数据结构，保证配置页可以正常渲染、绑定与保存。
 
 插件同时提供三个手动命令：`/hdhive_checkin`、`/dian115_checkin`、`/checkin_all`。
 
@@ -51,6 +53,7 @@
 ├── scripts/
 │   ├── sync-upstream.py                 # 上游代码同步
 │   ├── bump-version.py                  # 版本与更新日志维护
+│   ├── check-plugin.py                  # 插件规范静态校验
 │   ├── build-release.py                 # 生成 Release 压缩包与发布清单
 │   ├── publish-release.py               # 发布 GitHub Release
 │   └── upload-to-github.ps1             # 本地首次上传脚本
@@ -59,6 +62,7 @@
 
 ## 与官方规范的对应关系
 
+- **插件基类方法完整**：`init_plugin`、`get_state`、`get_api`、`get_form`、`get_page`、`stop_service` 在 `_PluginBase` 中都是抽象方法，缺少任何一个都会让 MoviePilot 实例化插件失败，现象是插件能安装、但配置页直接提示“配置加载失败”。
 - **目录名 = 插件主类名小写**：`class HDHiveDian115Checkin` 对应 `plugins.v2/hdhivedian115checkin/`，MoviePilot 通过 `package.v2.json` 的键定位该目录。
 - **三处版本一致**：`package.v2.json` 的 `version`、插件类中的 `plugin_version`、`history` 中最新的 `v{版本}` 必须相同。`scripts/build-release.py` 会在打包前强制校验。
 - **Release 发布**：索引声明 `"release": true`，Tag 为 `HDHiveDian115Checkin_v{版本}`，资产为 `hdhivedian115checkin_v{版本}.zip`，压缩包顶层即插件目录。MoviePilot 优先按 Release 安装，失败时自动回退到文件列表安装。
@@ -89,7 +93,8 @@ python scripts/sync-upstream.py C:\path\to\MoviePilot-Plugins
 # 提升版本（默认 patch）
 python scripts/bump-version.py --message "说明本次变更"
 
-# 本地校验：编译 + 打包
+# 本地校验：规范检查 + 编译 + 打包
+python scripts/check-plugin.py
 python -m compileall plugins.v2 scripts
 python scripts/build-release.py --out dist
 python scripts/publish-release.py --dist dist --dry-run
