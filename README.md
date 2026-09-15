@@ -32,7 +32,32 @@
 
 配置表单按 V2 官方规范使用 `VForm` / `VCard` / `VRow` / `VCol` 组件拼装，`get_form` 同时返回完整的默认数据结构，保证配置页可以正常渲染、绑定与保存。
 
+**WebAPI / OpenAPI 条件显示**：`查询模式` 决定 HDHive 的登录方式，表单会按选择自动切换，两者互不干扰。
+
+- 选择 `WebAPI（账号密码）`：只显示 `HDHive 用户名` 与 `HDHive 密码`，不读取也不校验任何 OpenAPI 配置。
+- 选择 `OpenAPI（应用授权）`：只显示 `OpenAPI 站点地址`、`OpenAPI 应用 Secret`、`OpenAPI Client ID`、`OpenAPI 回调地址`、`授权回调模式` 与 `OpenAPI 授权码`。
+
+因此使用 WebAPI 时不会再出现 `HDHive OpenAPI: 缺少应用 Secret` 之类的告警。
+
+**保存后立即执行一次**：HDHive 与 Dian115 各有一个 `保存后立即执行一次` 开关。打开后保存配置，插件会在约 3 秒后提交一次性签到任务，并自动关闭开关、写回配置，不影响签到周期等其他设置。
+
 插件同时提供三个手动命令：`/hdhive_checkin`、`/dian115_checkin`、`/checkin_all`。
+
+## 详情数据页
+
+插件实现了 `get_page`，因此插件卡片的配置页会出现 **查看数据** 按钮，点开后即为详情数据页：
+
+- **运行状态**：插件状态、签到周期、下次执行时间、最近执行时间，右上角带刷新按钮。
+- **渠道状态**：HDHive 与 Dian115 各自的启用与配置状态、当前账号、签到模式、可用积分和最近一次签到结果。
+- **最近签到记录**：`VTable` 表格按时间倒序展示时间、渠道、模式、触发方式、状态、积分变化与说明，最多 15 条。
+- **手动执行**：`立即执行全部` / `立即执行 HDHive` / `立即执行 Dian115` 三个按钮，点击后立即调用签到接口并刷新页面数据。手动执行不受 `启用 HDHive 签到` / `启用 Dian115 签到` 开关限制，`立即执行全部` 只执行已启用且账号配置完整的渠道。
+
+手动执行与刷新由 `get_api` 注册的接口提供：
+
+```text
+POST /api/v1/plugin/HDHiveDian115Checkin/checkin/{provider}   # provider：all / hdhive / dian115
+GET  /api/v1/plugin/HDHiveDian115Checkin/refresh
+```
 
 ## 目录结构
 
@@ -68,6 +93,7 @@
 - **Release 发布**：索引声明 `"release": true`，Tag 为 `HDHiveDian115Checkin_v{版本}`，资产为 `hdhivedian115checkin_v{版本}.zip`，压缩包顶层即插件目录。MoviePilot 优先按 Release 安装，失败时自动回退到文件列表安装。
 - **系统版本约束**：`system_version` 声明为 `>=2.14.6`，不满足的 MoviePilot 会拒绝安装。
 - **依赖**：V2 插件使用插件目录内的 `requirements.txt`。
+- **插件接口与详情页**：`get_api()` 注册的接口会被挂载到 `/api/v1/plugin/{PluginID}{path}`（同时注册 `/api/v2` 别名）；只有 `get_page()` 返回非空的 `component` 节点树时，MoviePilot 才会把 `has_page` 置为 `True` 并显示“查看数据”按钮。
 
 > MoviePilot V3 在没有 V3 专用实现时会回退加载 V2 实现，因此本插件同时适用于 MoviePilot V2 与 V3。MoviePilot V1 只读取 `package.json` 与 `plugins/`，本仓库不再提供该代实现。
 

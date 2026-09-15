@@ -200,6 +200,49 @@ class HDHiveDian115CheckinService:
             return self._get_dian115_client()
         raise ValueError(f"不支持的签到提供方：{provider.key}")
 
+    def _provider_account(self, provider: CheckinProvider) -> str:
+        """渠道当前使用的账号描述。"""
+        if provider.key == "hdhive":
+            if str(getattr(self._owner, "_hdhive_query_mode", "web")) == "api":
+                client = getattr(self._owner, "_hdhive_open_client", None)
+                authorized = bool(client and client.is_ready)
+                return f"OpenAPI 应用授权（{'已授权' if authorized else '未授权'}）"
+            return str(getattr(self._owner, "_hdhive_username", "") or "") or "未配置"
+        return str(getattr(self._owner, f"_{provider.key}_email", "") or "") or "未配置"
+
+    def provider_overview(self) -> List[Dict[str, Any]]:
+        """各渠道的启用状态、账号信息与最近一次签到记录。"""
+        items = []
+        for provider in self._PROVIDERS.values():
+            history = self._load_history(provider)
+            last = history[-1] if history else None
+            items.append({
+                "key": provider.key,
+                "name": provider.name,
+                "enabled": bool(getattr(
+                    self._owner, f"_{provider.key}_checkin_enabled", False
+                )),
+                "ready": self._checkin_credentials_ready(provider),
+                "account": self._provider_account(provider),
+                "mode": str(getattr(
+                    self._owner, f"_{provider.key}_checkin_mode", "normal"
+                ) or "normal"),
+                "modes": list(provider.modes),
+                "last_record": self._public_record(last) if last else None,
+            })
+        return items
+
+    def recent_records(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """按时间倒序返回所有渠道最近的签到记录。"""
+        records: List[Dict[str, Any]] = []
+        for provider in self._PROVIDERS.values():
+            records.extend(self._load_history(provider))
+        records.sort(key=lambda item: str(item.get("executed_at") or ""), reverse=True)
+        return [
+            self._public_record(item)
+            for item in records[:max(1, int(limit or 10))]
+        ]
+
     def _load_history(self, provider: CheckinProvider) -> List[Dict[str, Any]]:
         stored = self._owner.get_data(provider.history_key) or []
         if not isinstance(stored, list):
@@ -469,7 +512,7 @@ class HDHiveDian115CheckinService:
         return client.checkin()
 
     def _prepare_checkin(
-            self, provider: str, mode: str
+            self, provider: str, mode: str, require_enabled: bool = True
     ) -> Tuple[Optional[CheckinProvider], str, Optional[Dict[str, Any]]]:
         adapter = self._resolve_provider(provider)
         if adapter is None:
@@ -477,7 +520,7 @@ class HDHiveDian115CheckinService:
                 "success": False,
                 "message": "不支持的签到提供方",
             }
-        if not bool(getattr(
+        if require_enabled and not bool(getattr(
                 self._owner, f"_{adapter.key}_checkin_enabled", False
         )):
             return adapter, "", {
@@ -500,8 +543,13 @@ class HDHiveDian115CheckinService:
             }
         return adapter, normalized_mode, None
 
-    def start_manual_checkin(self, provider: str, mode: str = "") -> Dict[str, Any]:
-        adapter, normalized_mode, error = self._prepare_checkin(provider, mode)
+    def start_manual_checkin(
+            self, provider: str, mode: str = "", require_enabled: bool = False
+    ) -> Dict[str, Any]:
+        """手动触发单个渠道签到；显式调用不要求每日签到开关已打开。"""
+        adapter, normalized_mode, error = self._prepare_checkin(
+            provider, mode, require_enabled=require_enabled
+        )
         if error:
             return error
         if not self._run_lock.acquire(blocking=False):
@@ -541,8 +589,11 @@ class HDHiveDian115CheckinService:
             mode: str = "",
             lock_acquired: bool = False,
             notify: bool = True,
+            require_enabled: bool = True,
     ) -> Dict[str, Any]:
-        adapter, normalized_mode, error = self._prepare_checkin(provider, mode)
+        adapter, normalized_mode, error = self._prepare_checkin(
+            provider, mode, require_enabled=require_enabled
+        )
         if error:
             if lock_acquired:
                 self._run_lock.release()
@@ -623,6 +674,7 @@ class HDHiveDian115CheckinService:
                 trigger="manual",
                 mode=requested_mode,
                 notify=not aggregate,
+                require_enabled=aggregate,
             )
             public_result = dict(result)
             if isinstance(result.get("data"), dict):
@@ -635,12 +687,17 @@ class HDHiveDian115CheckinService:
         if aggregate:
             self._notify_checkin_summary(items, "签到汇总")
         success = bool(items) and all(item.get("success") for item in items)
+        if len(items) == 1:
+            message = str(items[0].get("message") or "")
+            if not message:
+                message = "签到完成" if success else "签到失败"
+        elif success:
+            message = f"已完成 {len(items)} 个渠道签到"
+        else:
+            message = f"已执行 {len(items)} 个渠道，存在签到失败"
         return {
             "success": success,
-            "message": (
-                f"已完成 {len(items)} 个渠道签到"
-                if success else f"已执行 {len(items)} 个渠道，存在签到失败"
-            ),
+            "message": message,
             "data": {"items": items},
         }
 

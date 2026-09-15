@@ -107,23 +107,59 @@ def check_plugin(plugin_id: str, meta: dict, errors: list, notes: list) -> None:
         errors.append(f"{plugin_id}: 索引图标 icons/{icon_name} 不存在")
 
     check_form(plugin_id, methods.get("get_form"), errors, notes)
-    check_contract(plugin_id, methods.get("get_api"), "[]", errors)
-    check_contract(plugin_id, methods.get("get_page"), "None", errors)
+    check_page(plugin_id, methods.get("get_page"), source, errors, notes)
+    check_api(plugin_id, methods.get("get_api"), errors, notes)
 
 
-def check_contract(plugin_id: str, method, expected_code: str, errors: list) -> None:
-    """确认 get_api / get_page 返回 MoviePilot 可接受的空值，而不是 None 之外的意外类型。"""
-    if method is None or len(method.body) != 1:
+def check_page(plugin_id: str, method, source: str, errors: list, notes: list) -> None:
+    """get_page 必须返回详情页面节点，否则 MoviePilot 会提示「此插件没有详情页面」。"""
+    if method is None:
         return
-    statement = method.body[0]
-    if not isinstance(statement, ast.Return):
+    returns = [node for node in ast.walk(method) if isinstance(node, ast.Return)]
+    if not returns:
+        errors.append(f"{plugin_id}: get_page 没有返回值")
         return
-    try:
-        code = ast.unparse(statement.value)
-    except Exception:  # pragma: no cover - 仅防御性处理
+    if all(
+        isinstance(node.value, ast.Constant) and node.value.value is None
+        for node in returns
+    ):
+        errors.append(f"{plugin_id}: get_page 只返回 None，MoviePilot 会提示「此插件没有详情页面」")
         return
-    if code not in {expected_code, "None", "[]"}:
-        errors.append(f"{plugin_id}: {method.name} 返回值 {code} 需人工确认")
+    segment = ast.get_source_segment(source, method) or ""
+    if "'component'" not in segment and '"component"' not in segment:
+        errors.append(f"{plugin_id}: get_page 未返回官方 component 节点结构")
+        return
+    notes.append(f"{plugin_id}: 已实现详情页面（get_page 返回 component 节点）")
+
+
+def check_api(plugin_id: str, method, errors: list, notes: list) -> None:
+    """get_api 需要返回 MoviePilot 可注册的接口描述列表。"""
+    if method is None:
+        return
+    returns = [node for node in ast.walk(method) if isinstance(node, ast.Return)]
+    if not returns:
+        errors.append(f"{plugin_id}: get_api 没有返回值")
+        return
+    value = resolve(returns[-1].value, method)
+    if not isinstance(value, ast.List):
+        errors.append(f"{plugin_id}: get_api 应返回接口描述列表")
+        return
+    if not value.elts:
+        notes.append(f"{plugin_id}: get_api 未注册插件接口")
+        return
+    failed = False
+    for element in value.elts:
+        if not isinstance(element, ast.Dict):
+            errors.append(f"{plugin_id}: get_api 的列表元素应为字典")
+            failed = True
+            continue
+        keys = constant_keys(element)
+        missing = [key for key in ("path", "endpoint", "methods") if key not in keys]
+        if missing:
+            errors.append(f"{plugin_id}: get_api 接口缺少字段 -> {', '.join(missing)}")
+            failed = True
+    if not failed:
+        notes.append(f"{plugin_id}: get_api 注册了 {len(value.elts)} 个接口")
 
 
 def check_form(plugin_id: str, method, errors: list, notes: list) -> None:
@@ -171,15 +207,21 @@ def check_form(plugin_id: str, method, errors: list, notes: list) -> None:
     model_keys = set(constant_keys(model_node))
 
     bound = set()
+    guards = []
     for node in ast.walk(form_node):
         if not isinstance(node, ast.Dict):
             continue
         props = constant_keys(node).get("props")
         if not isinstance(props, ast.Dict):
             continue
-        model = constant_keys(props).get("model")
+        prop_keys = constant_keys(props)
+        model = prop_keys.get("model")
         if isinstance(model, ast.Constant) and isinstance(model.value, str):
             bound.add(model.value)
+        for guard_key in ("v-show", "show"):
+            guard = prop_keys.get(guard_key)
+            if isinstance(guard, ast.Constant) and isinstance(guard.value, str):
+                guards.append(guard.value)
     if not bound:
         errors.append(f"{plugin_id}: get_form 没有任何绑定到数据结构的字段")
         return
@@ -188,6 +230,20 @@ def check_form(plugin_id: str, method, errors: list, notes: list) -> None:
         errors.append(f"{plugin_id}: 表单绑定了默认数据结构中不存在的字段 -> {', '.join(unknown)}")
     else:
         notes.append(f"{plugin_id}: 表单 {node_count} 个组件节点、{len(bound)} 个字段与默认数据结构一致")
+
+    # v-show 条件只能引用表单已有字段，否则 MoviePilot 前端会报错
+    keywords = {"true", "false", "null", "undefined", "typeof", "length", "in"}
+    for expression in guards:
+        for identifier in re.findall(r"[A-Za-z_$][\w$]*", expression):
+            if identifier in keywords or identifier in model_keys:
+                continue
+            if f"'{identifier}'" in expression or f'"{identifier}"' in expression:
+                continue
+            errors.append(
+                f"{plugin_id}: 字段显示条件引用了未知配置项 -> {identifier}（{expression}）"
+            )
+    if guards:
+        notes.append(f"{plugin_id}: {len(guards)} 个条件显示字段的条件表达式有效")
 
 
 def main() -> int:
