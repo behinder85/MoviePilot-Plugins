@@ -1,0 +1,16 @@
+﻿{
+  "HDHiveDian115Checkin": {
+    "name": "HDHive / Dian115 签到",
+    "description": "仅保留上游 MoviePilot-Plugins 中 HDHive 与 Dian115 两个渠道的每日签到、转盘和通知功能。",
+    "labels": "签到,HDHive,Dian115",
+    "version": "1.0.0",
+    "icon": "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/hdhive_dian115_checkin.png",
+    "author": "odomu",
+    "level": 1,
+    "release": true,
+    "system_version": ">=2.14.6",
+    "history": {
+      "v1.0.0": "从 MoviePilot-Plugins 提取 HDHive 与 Dian115 签到能力并重新打包"
+    }
+  }
+}

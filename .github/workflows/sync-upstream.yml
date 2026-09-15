@@ -1,0 +1,38 @@
+name: Sync HDHive/Dian115 Checkin
+
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Sync from upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Fetch upstream MoviePilot-Plugins
+        run: |
+          rm -rf /tmp/MoviePilot-Plugins
+          git clone --depth 1 https://github.com/odomu/MoviePilot-Plugins.git /tmp/MoviePilot-Plugins
+
+      - name: Copy HDHive / Dian115 check-in files
+        run: |
+          python3 scripts/sync-upstream.py /tmp/MoviePilot-Plugins
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No upstream changes."
+            exit 0
+          fi
+          git commit -m "chore: sync HDHive/Dian115 checkin from upstream"
+          git push
