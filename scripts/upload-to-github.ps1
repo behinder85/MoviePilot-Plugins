@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [string]$RepoUrl,
@@ -20,16 +20,29 @@ $owner = $Matches[1]
 $repo = $Matches[2] -replace "\.git$", ""
 $rawPath = "$owner/$repo"
 
+$pluginRoot = Join-Path $repoRoot "plugins.v2\hdhivedian115checkin"
+if (!(Test-Path (Join-Path $pluginRoot "__init__.py"))) {
+    throw "未找到插件入口，请确认 plugins.v2\hdhivedian115checkin\__init__.py 存在"
+}
+
 foreach ($file in @(
     (Join-Path $repoRoot "package.v2.json"),
-    (Join-Path $repoRoot "plugins.v2\hdhive_dian115_checkin\__init__.py"),
-    (Join-Path $repoRoot "README.md")
+    (Join-Path $pluginRoot "__init__.py")
 )) {
     $text = Get-Content -LiteralPath $file -Raw -Encoding UTF8
     $updated = $text.Replace("YOUR_GITHUB_USER/YOUR_REPO", $rawPath)
+    $updated = [regex]::Replace(
+        $updated,
+        "https://raw\.githubusercontent\.com/[^/""]+/[^/""]+/main/icons/hdhivedian115checkin\.png",
+        "https://raw.githubusercontent.com/$rawPath/main/icons/hdhivedian115checkin.png"
+    )
     if ($updated -ne $text) {
-        Set-Content -LiteralPath $file -Value $updated -Encoding UTF8 -NoNewline
-        Write-Host "已替换占位符：$file"
+        [System.IO.File]::WriteAllText(
+            $file,
+            $updated.TrimStart([char]0xFEFF).Replace("`r`n", "`n"),
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+        Write-Host "已更新仓库地址：$file"
     }
 }
 
@@ -59,3 +72,4 @@ if ($Token) {
 git push $pushUrl $Branch
 
 Write-Host "已推送到 $repoUrl ($Branch)"
+Write-Host "接下来请到 GitHub Actions 手动运行一次 Release Plugin，或在仓库中启用工作流。"

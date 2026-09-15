@@ -1,5 +1,7 @@
 name: Sync HDHive/Dian115 Checkin
 
+# 每天 UTC 16:00（北京时间 00:00）从上游同步签到客户端代码；
+# 有变化时自动提升补丁版本、推送并重建 Release，保证插件市场安装到最新代码。
 on:
   schedule:
     - cron: "0 16 * * *"
@@ -8,31 +10,59 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
 jobs:
   sync:
-    name: Sync from upstream
+    name: 同步上游并发布
     runs-on: ubuntu-latest
     steps:
       - name: Checkout this repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Fetch upstream MoviePilot-Plugins
         run: |
           rm -rf /tmp/MoviePilot-Plugins
           git clone --depth 1 https://github.com/odomu/MoviePilot-Plugins.git /tmp/MoviePilot-Plugins
 
-      - name: Copy HDHive / Dian115 check-in files
-        run: |
-          python3 scripts/sync-upstream.py /tmp/MoviePilot-Plugins
+      - name: Sync HDHive / Dian115 client files
+        run: python scripts/sync-upstream.py /tmp/MoviePilot-Plugins
 
-      - name: Commit and push changes
+      - name: Detect changes
+        id: changes
+        run: |
+          if git diff --quiet -- plugins.v2; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump plugin version
+        if: steps.changes.outputs.changed == 'true'
+        run: python scripts/bump-version.py --message "同步上游 HDHive/Dian115 客户端代码"
+
+      - name: Build release archives
+        if: steps.changes.outputs.changed == 'true'
+        run: python scripts/build-release.py --out dist
+
+      - name: Commit and push
+        if: steps.changes.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          if git diff --cached --quiet; then
-            echo "No upstream changes."
-            exit 0
-          fi
           git commit -m "chore: sync HDHive/Dian115 checkin from upstream"
           git push
+
+      - name: Publish GitHub Release
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish-release.py --dist dist

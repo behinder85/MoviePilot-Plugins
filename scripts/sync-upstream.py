@@ -1,66 +1,71 @@
 #!/usr/bin/env python3
-"""Sync HDHive / Dian115 check-in client files from upstream.
+"""从上游 MoviePilot-Plugins 同步 HDHive / Dian115 签到客户端代码。
 
-Usage:
+用法：
     python scripts/sync-upstream.py /path/to/MoviePilot-Plugins
 
-The script intentionally does NOT overwrite the plugin glue files:
-    - plugins.v2/hdhive_dian115_checkin/__init__.py
-    - plugins.v2/hdhive_dian115_checkin/checkin_service.py
-    - package.v2.json
+只覆盖签到客户端与最小依赖文件，不会覆盖本插件的入口、签到编排和 package.v2.json。
 """
 
 import shutil
 import sys
 from pathlib import Path
 
-UPSTREAM_ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else None
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = REPO_ROOT / "plugins.v2" / "hdhive_dian115_checkin"
+PLUGIN_DIR_NAME = "hdhivedian115checkin"
+PLUGIN_ROOT = REPO_ROOT / "plugins.v2" / PLUGIN_DIR_NAME
+UPSTREAM_PLUGIN = "plugins.v2/cloudsubscribe"
 
-# upstream-relative path -> destination path under PLUGIN_ROOT
+# 上游相对路径 -> 本插件内相对路径
 FILES = {
-    "plugins.v2/cloudsubscribe/search/http_client.py": "search/http_client.py",
-    "plugins.v2/cloudsubscribe/search/cloudflare.py": "search/cloudflare.py",
-    "plugins.v2/cloudsubscribe/search/matching.py": "search/matching.py",
-    "plugins.v2/cloudsubscribe/search/types.py": "search/types.py",
-    "plugins.v2/cloudsubscribe/search/hdhive/web/client.py": "search/hdhive/web/client.py",
-    "plugins.v2/cloudsubscribe/search/hdhive/web/action.py": "search/hdhive/web/action.py",
-    "plugins.v2/cloudsubscribe/search/hdhive/web/captcha.py": "search/hdhive/web/captcha.py",
-    "plugins.v2/cloudsubscribe/search/hdhive/web/captcha.bin": "search/hdhive/web/captcha.bin",
-    "plugins.v2/cloudsubscribe/search/hdhive/web/parser.py": "search/hdhive/web/parser.py",
-    "plugins.v2/cloudsubscribe/search/hdhive/web/security.py": "search/hdhive/web/security.py",
-    "plugins.v2/cloudsubscribe/search/hdhive/open/client.py": "search/hdhive/open/client.py",
-    "plugins.v2/cloudsubscribe/search/dian115/client.py": "search/dian115/client.py",
-    "plugins.v2/cloudsubscribe/search/dian115/security.py": "search/dian115/security.py",
-    "plugins.v2/cloudsubscribe/utils/http_client.py": "utils/http_client.py",
-    "plugins.v2/cloudsubscribe/utils/cache.py": "utils/cache.py",
-    "plugins.v2/cloudsubscribe/utils/file_parser.py": "utils/file_parser.py",
+    "search/http_client.py": "search/http_client.py",
+    "search/cloudflare.py": "search/cloudflare.py",
+    "search/matching.py": "search/matching.py",
+    "search/types.py": "search/types.py",
+    "search/hdhive/web/client.py": "search/hdhive/web/client.py",
+    "search/hdhive/web/action.py": "search/hdhive/web/action.py",
+    "search/hdhive/web/captcha.py": "search/hdhive/web/captcha.py",
+    "search/hdhive/web/captcha.bin": "search/hdhive/web/captcha.bin",
+    "search/hdhive/web/parser.py": "search/hdhive/web/parser.py",
+    "search/hdhive/web/security.py": "search/hdhive/web/security.py",
+    "search/hdhive/open/client.py": "search/hdhive/open/client.py",
+    "search/dian115/client.py": "search/dian115/client.py",
+    "search/dian115/security.py": "search/dian115/security.py",
+    "utils/http_client.py": "utils/http_client.py",
+    "utils/cache.py": "utils/cache.py",
+    "utils/file_parser.py": "utils/file_parser.py",
 }
 
 
 def main() -> int:
-    if UPSTREAM_ROOT is None or not UPSTREAM_ROOT.is_dir():
-        print("Missing upstream directory. Usage: python scripts/sync-upstream.py UPSTREAM_DIR", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print(
+            "缺少上游目录参数。用法：python scripts/sync-upstream.py UPSTREAM_DIR",
+            file=sys.stderr,
+        )
+        return 2
+    upstream_root = Path(sys.argv[1]).resolve()
+    if not upstream_root.is_dir():
+        print(f"上游目录不存在：{upstream_root}", file=sys.stderr)
         return 2
 
     copied = []
     missing = []
-    for src_rel, dst_rel in FILES.items():
-        source = UPSTREAM_ROOT / src_rel
-        target = REPO_ROOT / "plugins.v2" / "hdhive_dian115_checkin" / dst_rel
+    for rel_path, dest_rel in FILES.items():
+        source = upstream_root / UPSTREAM_PLUGIN / rel_path
+        target = PLUGIN_ROOT / dest_rel
         if not source.is_file():
-            missing.append(src_rel)
+            missing.append(f"{UPSTREAM_PLUGIN}/{rel_path}")
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-        copied.append(dst_rel)
+        copied.append(dest_rel)
 
-    print(f"Copied {len(copied)} files from {UPSTREAM_ROOT}")
+    print(f"已从 {upstream_root} 同步 {len(copied)} 个文件")
     for item in copied:
         print(f"  + {item}")
     if missing:
-        print("Missing upstream files:", file=sys.stderr)
+        print("上游缺失以下文件：", file=sys.stderr)
         for item in missing:
             print(f"  - {item}", file=sys.stderr)
         return 1

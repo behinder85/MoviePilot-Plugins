@@ -1,0 +1,39 @@
+name: Release Plugin
+
+# 对应官方仓库发布约定：索引变更时按 {插件ID}_v{版本} 打 Tag，
+# 资产为 {插件目录小写}_v{版本}.zip，压缩包顶层即插件目录。
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "package*.json"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-plugin
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 打包并发布 Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build release archives
+        run: python scripts/build-release.py --out dist
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish-release.py --dist dist
