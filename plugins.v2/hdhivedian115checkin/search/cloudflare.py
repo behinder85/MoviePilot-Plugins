@@ -3,6 +3,14 @@
 from typing import Any, Dict, Optional
 from urllib.parse import unquote, urlparse, urlsplit
 
+from app.core.config import settings
+from app.helper.browser import PlaywrightHelper
+
+try:
+    from cloakbrowser import launch_context
+except ImportError:
+    launch_context = None
+
 from .http_client import normalize_proxies
 
 
@@ -64,9 +72,8 @@ def click_challenge_frame(page) -> bool:
 
 
 def launch_challenge_context(proxy: Any):
-    from app.core.config import settings
-    from cloakbrowser import launch_context
-
+    if launch_context is None:
+        raise RuntimeError("未安装 cloakbrowser，无法拉起反盾浏览器上下文")
     return launch_context(
         headless=True, proxy=browser_proxy(proxy),
         humanize=getattr(settings, "CLOAKBROWSER_HUMANIZE", True),
@@ -76,7 +83,6 @@ def launch_challenge_context(proxy: Any):
 
 def playwright_snapshot(url: str, proxy: Any, timeout: int, gate):
     """使用平台浏览器获取页面和同一浏览器会话的 Cookie/UA。"""
-    from app.helper.browser import PlaywrightHelper
 
     def snapshot(page):
         return {

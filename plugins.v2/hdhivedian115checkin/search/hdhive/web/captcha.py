@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 import threading
@@ -10,6 +11,15 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import parse_qs, urljoin, urlsplit, urlunsplit
+
+try:
+    import numpy as np
+    from PIL import Image, ImageFilter, ImageSequence
+except ImportError:
+    np = None
+    Image = None
+    ImageFilter = None
+    ImageSequence = None
 
 from app.log import logger
 
@@ -85,14 +95,11 @@ class ActionResult:
 
 
 def _dependencies():
-    try:
-        import numpy as np
-        from PIL import Image, ImageSequence
-    except ImportError as error:
+    if np is None or Image is None or ImageSequence is None:
         raise HDHiveCaptchaError(
             "HDHive 验证码依赖缺失，请安装 Pillow 和 numpy",
             code="captcha_dependency_missing",
-        ) from error
+        )
     return np, Image, ImageSequence
 
 
@@ -158,7 +165,6 @@ def _extract_score_mask(np, Image, score, threshold: float, minimum: int, margin
     mask &= valid_area
     mask = _remove_small_components(np, mask, minimum)
     image = Image.fromarray(mask.astype(np.uint8) * 255)
-    from PIL import ImageFilter
     image = image.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
     mask = _remove_small_components(np, np.asarray(image) > 0, minimum)
 
@@ -570,7 +576,6 @@ class HDHiveCaptchaSolver:
                 "HDHive 安全页未返回动态验证码",
                 code="captcha_image_missing",
             )
-        import base64
         encoded = match.group(1)
         encoded += "=" * (-len(encoded) % 4)
         try:

@@ -73,6 +73,12 @@ class MediaFileParser:
                     item.get("children") or [], relative_path
                 )
             else:
-                if relative_path:
+                if relative_path and isinstance(item, dict):
                     item.setdefault("_relative_path", relative_path)
-                yield item
+                    yield item
+                elif relative_path:
+                    enriched = dict(item)
+                    enriched["_relative_path"] = relative_path
+                    yield enriched
+                else:
+                    yield item

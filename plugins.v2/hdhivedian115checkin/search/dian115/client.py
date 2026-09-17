@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
+from .security import turnstile_token
 from ..cloudflare import is_cloudflare_challenge
 from ..http_client import (
     AccountActionGate,
@@ -432,7 +433,6 @@ class Dian115Client:
                     self._login(allow_browser_login=allow_browser_login)
                 request_kwargs = dict(kwargs)
                 if action:
-                    from .security import turnstile_token
                     token = turnstile_token(self, action, allow_browser_login)
                     body = dict(kwargs.get("json") or {})
                     if token:

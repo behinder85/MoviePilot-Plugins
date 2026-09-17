@@ -8,15 +8,14 @@ from collections import deque
 from contextlib import contextmanager
 from functools import partial
 from typing import Any, Callable, Dict, Optional
+
 from app.log import logger
+
 from ..utils.http_client import (
-    build_proxy_url,
     normalize_proxies,
     normalize_proxy_address,
-    proxy_server,
     request_error_summary,
     requests,
-    validate_proxy_address,
 )
 
 TRANSIENT_REQUEST_EXCEPTIONS = (
@@ -291,8 +290,9 @@ class RequestGate:
                 0.0,
             )
         cooldown_wait = max(self._cooldown_until - now, 0.0)
-        if fail_on_cooldown and cooldown_wait > 0:
-            raise RequestGateCooldown(cooldown_wait, self._cooldown_status)
+        if cooldown_wait > 0:
+            if fail_on_cooldown or cooldown_wait > 3.0:
+                raise RequestGateCooldown(cooldown_wait, self._cooldown_status)
         interval_wait = 0.0
         if not getattr(self._sequence_local, "skip_interval", False):
             interval_wait = (

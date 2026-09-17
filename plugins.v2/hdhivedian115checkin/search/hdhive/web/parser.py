@@ -44,11 +44,17 @@ EMBEDDED_ESCAPE_VALUES = {
 FILE_PREVIEW_CAPABILITY_RE = re.compile(
     r'["\']fileListPreviewEnabled["\']\s*:\s*(true|false)', re.I
 )
-NO_RESOURCE_MARKERS = ("暂无资源", "暂时没有资源", "尚无资源")
+NO_RESOURCE_MARKERS = ("暂无资源", "暂时没有资源", "尚无资源", "暂无网盘资源")
 CHALLENGE_MARKERS = (
-    "cf-chl-", "challenge-platform", "captcha", "访问频繁",
-    "页面过期", "请刷新页面", "安全验证",
+    "cf-chl-widget",
+    "cf-challenge",
+    "challenge-platform",
+    "/security-check?challenge=",
+    "abuse_challenge_required",
+    "请完成安全验证",
+    "系统检测到异常访问",
 )
+
 ED2K_URL_RE = re.compile(
     r"ed2k://\|file\|[^|\r\n]+\|\d+\|[0-9A-Fa-f]{32}"
     r"(?:\|(?:h|p)=[^|\r\n]+)*\|/",
@@ -148,6 +154,21 @@ def resource_detail_path(response: Any) -> str:
     return decode_embedded_text(match.group(1)) if match else ""
 
 
+def is_login_page(response_or_text: Any) -> bool:
+    """判断是否为重定向至登录页或未登录拦截页。"""
+    if hasattr(response_or_text, "url"):
+        url = str(getattr(response_or_text, "url", "") or "").strip()
+        path = urlsplit(url).path.rstrip("/").lower()
+        if path.endswith("/login"):
+            return True
+    text = response_text(response_or_text) if not isinstance(response_or_text, str) else response_or_text
+    if not text:
+        return False
+    if "<title>登录" in text or "app/(auth)/login" in text:
+        return True
+    return False
+
+
 def resource_group_data(page_text: str) -> Optional[Dict[str, Any]]:
     decoder = json.JSONDecoder()
     for script_match in NEXT_SCRIPT_RE.finditer(page_text or ""):
@@ -169,14 +190,32 @@ def resource_group_data(page_text: str) -> Optional[Dict[str, Any]]:
                 group_data = _nested_dict(parsed, "groupData")
                 if group_data is not None:
                     return group_data
-    if any(marker in (page_text or "") for marker in NO_RESOURCE_MARKERS):
+    text = page_text or ""
+    if any(marker in text for marker in NO_RESOURCE_MARKERS):
+        return {}
+    # 若页面是合法渲染的媒体详情页但无资源分组，判定为正常空资源，不报结构改变或挑战保护
+    if (
+            NEXT_SCRIPT_RE.search(text)
+            and any(marker in text for marker in ("mediaId", "media_resource", "fromPath"))
+    ):
         return {}
     return None
 
 
-def is_challenge_page(page_text: str) -> bool:
-    normalized = str(page_text or "").lower()
-    return any(marker.lower() in normalized for marker in CHALLENGE_MARKERS)
+def is_challenge_page(response_or_text: Any) -> bool:
+    """精准判断是否为真正的安全挑战或人机拦截页，防止正常页面语言包中词汇误判。"""
+    if is_login_page(response_or_text):
+        return False
+    text = response_text(response_or_text) if not isinstance(response_or_text, str) else response_or_text
+    if not text:
+        return False
+    normalized = text.lower()
+    if any(marker.lower() in normalized for marker in CHALLENGE_MARKERS):
+        return True
+    # Cloudflare 专属拦截挑战标题
+    if "<title>just a moment...</title>" in normalized or "<title>attention required! | cloudflare</title>" in normalized:
+        return True
+    return False
 
 
 def file_preview_capability(response: Any) -> Optional[bool]:

@@ -2,7 +2,7 @@
 
 import html
 import re
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 import unicodedata
 
@@ -25,6 +25,20 @@ _ROMAN_NUMBERS = {
     "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10,
 }
 
+_TAG_LANGUAGE_INNER_RE = re.compile(
+    r"内封(?:简繁英|简繁中英|简繁|简中|繁中|中文|英语|英文)", re.IGNORECASE
+)
+_TRASH_TAG_WORDS = frozenset({
+    "盘酱酱", "panweb", "国产剧", "美剧", "日韩剧", "韩剧", "日剧", "泰剧",
+    "动漫", "电影", "电视剧", "全集", "合集", "更新", "更新至", "最新",
+    "分享", "免费", "链接", "未删减", "超清", "高清", "热播", "完结",
+    "首发", "独家", "推荐", "资源",
+})
+_SEASON_EPISODE_TAG_RE = re.compile(
+    r"^(?:s\d+|e\d+|ep\d+|第[0-9一二三四五六七八九十]+[季期集]|19\d\d|20\d\d)$",
+    re.IGNORECASE
+)
+_TAG_SPLIT_RE = re.compile(r"[\s,，;；|/]+")
 
 def unique_texts(
         values: Iterable[object],
@@ -144,3 +158,182 @@ def title_matches(candidate: object, expected_titles: Iterable[object]) -> bool:
 def extract_year(value: object) -> str:
     matched = re.search(r"\b(19\d{2}|20\d{2})\b", str(value or ""))
     return matched.group(1) if matched else ""
+
+
+def extract_mikan_rss_params(text: object) -> Optional[Tuple[str, Optional[str]]]:
+    """从文本或 URL 中提取 Mikan RSS 的 bangumiId 和 subgroupid。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    match = re.search(r"bangumiId=(\d+)", raw, re.I)
+    if not match:
+        return None
+    bangumi_id = match.group(1)
+    subgroup_match = re.search(r"subgroupid=(\d+)", raw, re.I)
+    subgroup_id = subgroup_match.group(1) if subgroup_match else None
+    return bangumi_id, subgroup_id
+
+
+def is_anime_media(media: Any, candidate: Optional[Any] = None) -> bool:
+    """精确判断媒体是否属于日本动漫番剧或动画电影（日漫）。
+
+    后端统一定义与标记：支持 MediaInfo 对象、候选 Candidate 或字典结构。
+    注意：日漫才是 Mikan 专职订阅与搜索范畴，普通国产动画或欧美动画不属于日漫，防止过度过滤与误展示。
+    """
+    targets = [t for t in (candidate, media) if t is not None]
+    if not targets:
+        return False
+
+    def _get(obj: Any, key: str) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key)
+        val = getattr(obj, key, None)
+        if hasattr(val, "_mock_return_value"):
+            return None
+        return val
+
+    # 1. 显式二次元平台 ID 标记（Bangumi, AniList, AniDB）
+    for target in targets:
+        for id_field in ("bangumi_id", "bgm_id", "anilist_id", "anidb_id"):
+            val = _get(target, id_field)
+            if val is not None:
+                sval = str(val).strip()
+                if sval and sval != "0":
+                    return True
+
+    # 2. 纯动漫渠道来源（Mikan, Bangumi, AniList）
+    for target in targets:
+        source = str(_get(target, "source") or "").lower()
+        if source in ("mikan", "bangumi", "anilist"):
+            return True
+
+    # 3. 分类明确标明日番/日本动画
+    for target in targets:
+        category = str(_get(target, "category") or "")
+        if "日番" in category or "日本动画" in category:
+            return True
+
+    # 4. 原产语言为日语 (ja) 且具备动画/二次元特征
+    for target in targets:
+        lang = str(_get(target, "original_language") or "").lower()
+        if lang == "ja":
+            genre_ids = _get(target, "genre_ids")
+            if genre_ids:
+                if isinstance(genre_ids, str):
+                    genre_id_list = [g.strip() for g in genre_ids.split(",") if g.strip()]
+                elif isinstance(genre_ids, (list, tuple, set)):
+                    genre_id_list = [str(g).strip() for g in genre_ids if str(g).strip()]
+                else:
+                    genre_id_list = [str(genre_ids).strip()]
+                if any(gid in {"16", "Animation"} for gid in genre_id_list):
+                    return True
+            genres = _get(target, "genres") or []
+            if isinstance(genres, (list, tuple, set)):
+                for g in genres:
+                    name = str(g.get("name") if isinstance(g, dict) else g or "")
+                    if any(kw in name for kw in ("动画", "Animation", "动漫", "Anime")):
+                        return True
+            category = str(_get(target, "category") or "")
+            if any(kw in category for kw in ("动漫", "动画", "番剧", "Anime")):
+                return True
+
+    return False
+
+
+def extract_resource_tags(
+        title: str,
+        existing_tags: Optional[Iterable[Any]] = None,
+) -> List[str]:
+    """从资源标题和已有标签中直接提取并规范化全部规格标签。"""
+    specs: List[str] = []
+    seen_upper = set()
+
+    def add_spec(val: str) -> None:
+        if not val:
+            return
+        upper_val = val.upper()
+        if upper_val not in seen_upper:
+            seen_upper.add(upper_val)
+            specs.append(val)
+
+    raw_title = str(title or "").strip()
+    upper_title = raw_title.upper()
+
+    # 分辨率
+    if re.search(r"(?:\b|\[|\.)(?:4K|2160P|UHD)(?:\b|\]|\.)", upper_title, re.I):
+        add_spec("4K")
+    elif re.search(r"(?:\b|\[|\.)(?:1080P|1080I|FHD)(?:\b|\]|\.)", upper_title, re.I):
+        add_spec("1080P")
+    elif re.search(r"(?:\b|\[|\.)(?:720P)(?:\b|\]|\.)", upper_title, re.I):
+        add_spec("720P")
+
+    # 制作来源与媒介
+    if re.search(r"\.ISO\b|\[\d+(?:\.\d+)?GB\]\.ISO", upper_title, re.I):
+        add_spec("原盘ISO")
+    elif "REMUX" in upper_title:
+        add_spec("REMUX")
+    elif re.search(r"(?:\b|\[|\.)(?:BDMV|BLURAY|BLU-RAY)(?:\b|\]|\.)", upper_title, re.I):
+        add_spec("BluRay")
+    elif re.search(r"WEB-?RIP", upper_title, re.I):
+        add_spec("WebRip")
+    elif re.search(r"WEB-?DL", upper_title, re.I):
+        add_spec("WEB-DL")
+
+    # 动态范围
+    if re.search(r"DV|DOLBY\s*VISION|杜比视界", upper_title, re.I):
+        add_spec("杜比视界")
+    if "HDR10+" in upper_title:
+        add_spec("HDR10+")
+    elif re.search(r"(?:\b|\[|\.)HDR10?(?:\b|\]|\.)", upper_title, re.I):
+        add_spec("HDR")
+
+    # 帧率
+    if re.search(r"60FPS|60帧", upper_title, re.I):
+        add_spec("60帧")
+    elif re.search(r"120FPS|120帧", upper_title, re.I):
+        add_spec("120帧")
+
+    # 字幕与配音
+    # 先检测「无中字」否定标记，再检测正向中文字幕标记，避免「无中字」中的「中字」被误识别
+    has_no_chs = bool(re.search(r"无(?:中文字幕|中字|字幕)|RAW|生肉", upper_title, re.I))
+    lang_match = _TAG_LANGUAGE_INNER_RE.search(raw_title)
+    if has_no_chs:
+        add_spec("无中字")
+    elif lang_match:
+        add_spec(lang_match.group(0))
+    elif re.search(r"(?<![无没])(?:中字|内嵌|简繁|双语|中英|\bCHS\b|\bCHT\b)", raw_title, re.I):
+        add_spec("中字")
+    if re.search(r"国语|国配|国粤", upper_title, re.I):
+        add_spec("国语")
+    if re.search(r"粤语|国粤", upper_title, re.I):
+        add_spec("粤语")
+
+    # 音效
+    if re.search(r"ATMOS|全景声", upper_title, re.I):
+        add_spec("杜比全景声")
+
+    # 合并并清洗已有 tags
+    if existing_tags:
+        lower_title = raw_title.lower()
+        for tag in existing_tags:
+            if not tag:
+                continue
+            parts = _TAG_SPLIT_RE.split(str(tag).strip())
+            for part in parts:
+                clean = part.lstrip("#").strip()
+                if not clean or len(clean) < 2 or len(clean) > 10:
+                    continue
+                clean_lower = clean.lower()
+                if clean_lower in _TRASH_TAG_WORDS or any(w in clean_lower for w in _TRASH_TAG_WORDS):
+                    continue
+                if _SEASON_EPISODE_TAG_RE.match(clean):
+                    continue
+                if lower_title and clean_lower == lower_title:
+                    continue
+                add_spec(clean)
+                if len(specs) >= 8:
+                    break
+            if len(specs) >= 8:
+                break
+
+    return specs

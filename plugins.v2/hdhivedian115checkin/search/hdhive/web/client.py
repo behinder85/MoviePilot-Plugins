@@ -461,6 +461,7 @@ class HDHiveClient:
             with self._request_gate.immediate_sequence(
                     request_count=request_count,
                     cancel_check=self.stop_requested,
+                    fail_on_cooldown=True,
             ):
                 yield
 
