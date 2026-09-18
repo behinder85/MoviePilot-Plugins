@@ -26,6 +26,10 @@ from .security import (
     needs_action_proof,
     payload_error_message,
 )
+from ...cloudflare import (
+    bypass_cloudflare_session,
+    is_cloudflare_response,
+)
 from ...http_client import (
     RequestGate,
     gated_idempotent_request,
@@ -46,26 +50,26 @@ class HDHiveWebError(RuntimeError):
 
 
 class _RiskCooldownState:
-    """按账户共享的风控冷却记录：进程内存态 + 平台缓存持久化。"""
+    """进程间与客户端实例间共享的软风控冷却状态。"""
 
     _LOCK = threading.RLock()
     _BY_KEY: Dict[str, tuple] = {}
 
-    def __init__(self, session_key: str, cache, cache_ttl: int):
-        self._key = str(session_key or "")
+    def __init__(self, key: str, cache, cache_ttl: int = 3600):
+        self._key = str(key or "")
         self._cache = cache
-        self._cache_ttl = int(cache_ttl or 1)
+        self._cache_ttl = max(60, int(cache_ttl or 3600))
 
-    def remember(self, seconds: float, status: int) -> None:
-        """记录一次风控冷却；仅当新的截止时间更晚时覆盖旧值。"""
+    def remember(self, seconds: float, status: int = 0) -> None:
         duration = max(0.0, float(seconds or 0.0))
-        monotonic_until = time.monotonic() + duration
-        with self._LOCK:
-            current_until, _ = self._BY_KEY.get(self._key, (0.0, 0))
-            if monotonic_until >= current_until:
-                self._BY_KEY[self._key] = (monotonic_until, int(status or 0))
         if duration <= 0:
             return
+        with self._LOCK:
+            monotonic_until = time.monotonic() + duration
+            current = self._BY_KEY.get(self._key)
+            if current and monotonic_until < current[0]:
+                return
+            self._BY_KEY[self._key] = (monotonic_until, int(status or 0))
         try:
             current = self._cache.get("state") or {}
             wall_until = time.time() + duration
@@ -98,6 +102,15 @@ class _RiskCooldownState:
             if wall_remaining > remaining:
                 return wall_remaining, wall_status
             return remaining, int(status or 0)
+
+    def clear(self) -> None:
+        """重置冷却状态。"""
+        try:
+            self._cache.delete("state")
+        except Exception:
+            pass
+        with self._LOCK:
+            self._BY_KEY.pop(self._key, None)
 
 
 class HDHiveClient:
@@ -142,7 +155,7 @@ class HDHiveClient:
             ),
             cache_ttl=self._RISK_COOLDOWN_CACHE_TTL,
         )
-        self._session = requests.Session(impersonate="chrome")
+        self._session = requests.Session(impersonate="chrome120")
         self._user_agent = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -261,16 +274,18 @@ class HDHiveClient:
         except (TypeError, ValueError):
             return 0
 
-    @staticmethod
-    def _is_challenge_response(response) -> bool:
-        content_type = str(response.headers.get("content-type") or "").lower()
-        return (
-                "text/html" in content_type
-                or str(response.headers.get("cf-mitigated") or "").lower()
-                == "challenge"
-        )
+    @classmethod
+    def _is_challenge_response(cls, response) -> bool:
+        if response is None:
+            return False
+        try:
+            if HDHiveCaptchaSolver.is_challenge_response(response):
+                return True
+        except Exception:
+            pass
+        return False
 
-    def _raw_request(self, method: str, path: str, **kwargs):
+    def _raw_request(self, method: str, path: str, retry_cf: bool = True, **kwargs):
         shared_remaining, shared_status = self._risk_cooldowns.remaining()
         cooldown_remaining = max(
             shared_remaining,
@@ -311,6 +326,18 @@ class HDHiveClient:
                 headers=request_headers,
                 **kwargs,
             )
+            if retry_cf and is_cloudflare_response(response):
+                if bypass_cloudflare_session(
+                        self._session, f"{self.BASE_URL}/login", proxy=self._proxies
+                ):
+                    self._user_agent = (
+                            self._session.headers.get("user-agent") or self._user_agent
+                    )
+                    self._save_cookies()
+                    self._request_gate.clear_cooldown()
+                    self._risk_cooldowns.clear()
+                    return self._raw_request(method, path, retry_cf=False, **kwargs)
+
             body_cooldown = self._body_cooldown_seconds(response)
             if body_cooldown > self._request_gate.cooldown_remaining:
                 self._request_gate.activate_cooldown(
@@ -371,6 +398,8 @@ class HDHiveClient:
                     response.status_code == 403
                     or "/login" in str(getattr(response, "url", ""))
             ):
+                if is_cloudflare_response(response):
+                    break
                 self._authenticated = False
                 self._session.cookies.clear()
                 self._login_with_sequence()
@@ -509,6 +538,8 @@ class HDHiveClient:
             if session_key:
                 self._BIND_SECRETS[session_key] = bind_secret
             self._security.invalidate()
+        self._request_gate.clear_cooldown()
+        self._risk_cooldowns.clear()
         self._save_cookies()
 
     def _login_bind_secret(self, response, payload: Any) -> str:

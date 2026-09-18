@@ -335,6 +335,12 @@ class RequestGate:
             f"{self._name} 触发{reason}，冷却 {normalized_seconds} 秒"
         )
 
+    def clear_cooldown(self) -> None:
+        """重置冷却状态（例如在重新登录刷新成功后解除风控）。"""
+        with self._lock:
+            self._cooldown_until = 0.0
+            self._cooldown_status = 0
+
     def _apply_cooldown(self, response) -> None:
         status = int(getattr(response, "status_code", 0) or 0)
         if status not in {403, 429, 500, 502, 503, 504}:
