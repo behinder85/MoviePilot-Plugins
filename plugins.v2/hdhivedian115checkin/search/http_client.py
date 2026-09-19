@@ -325,7 +325,7 @@ class RequestGate:
             self, seconds: int, status: int = 0, reason: str = "风险保护"
     ) -> None:
         """由协议层识别到软风控信号时主动开启共享冷却。"""
-        normalized_seconds = max(1, min(int(seconds or 1), 10 * 60))
+        normalized_seconds = max(1, min(int(seconds or 1), 3 * 60))
         with self._lock:
             cooldown_until = time.monotonic() + normalized_seconds
             if cooldown_until >= self._cooldown_until:
@@ -357,7 +357,7 @@ class RequestGate:
                 return
         retry_after = str(response.headers.get("retry-after") or "").strip()
         try:
-            seconds = max(1, min(int(float(retry_after)), 10 * 60))
+            seconds = max(1, min(int(float(retry_after)), 3 * 60))
         except (TypeError, ValueError):
             seconds = 0
             if status == 429:

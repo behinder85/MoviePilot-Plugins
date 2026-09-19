@@ -46,14 +46,25 @@ def is_cloudflare_challenge(text: str = "", status_code: int = 200,
     headers = {str(key).lower(): str(value).lower()
                for key, value in (headers or {}).items()}
     lowered = str(text or "").lower()
-    return (
-            headers.get("cf-mitigated") == "challenge"
-            or any(marker in lowered for marker in (
+    if headers.get("cf-mitigated") == "challenge":
+        return True
+    if any(marker in lowered for marker in (
         "cf-chl-", "challenges.cloudflare.com",
         "cdn-cgi/challenge-platform", "enable javascript and cookies",
         "<title>just a moment",
+    )):
+        return True
+    # 若返回有效 JSON 业务响应，不能因为 server: cloudflare 就误判为 CF 质询
+    content_type = headers.get("content-type", "")
+    stripped = lowered.strip()
+    if "json" in content_type or (stripped.startswith("{") and stripped.endswith("}")):
+        return False
+    return (
+            status_code in {403, 503}
+            and headers.get("server") == "cloudflare"
+            and any(marker in lowered for marker in (
+        "cloudflare", "attention required", "error 1020", "ray id:", "access denied"
     ))
-            or (status_code in {403, 503} and headers.get("server") == "cloudflare")
     )
 
 

@@ -122,11 +122,11 @@ class HDHiveClient:
             / "CloudSubscribe"
             / "hdhive-curl-session.json"
     )
-    _RISK_COOLDOWN_SECONDS = 60
-    _SOFT_RISK_COOLDOWN_SECONDS = 10 * 60
+    _RISK_COOLDOWN_SECONDS = 30
+    _SOFT_RISK_COOLDOWN_SECONDS = 2 * 60
     _SERVER_ERROR_COOLDOWN_SECONDS = 5
     _MAX_REQUESTS_PER_MINUTE = 10
-    _RISK_COOLDOWN_CACHE_TTL = 10 * 60
+    _RISK_COOLDOWN_CACHE_TTL = 3 * 60
     _BIND_SECRETS: Dict[str, str] = {}
     def __init__(
             self,
@@ -251,7 +251,7 @@ class HDHiveClient:
             1,
             min(
                 int(seconds or self._SOFT_RISK_COOLDOWN_SECONDS),
-                10 * 60,
+                3 * 60,
             ),
         )
         self._request_gate.activate_cooldown(
@@ -270,7 +270,7 @@ class HDHiveClient:
         if not match:
             return 0
         try:
-            return max(1, min(int(match.group(1)), 10 * 60))
+            return max(1, min(int(match.group(1)), 3 * 60))
         except (TypeError, ValueError):
             return 0
 

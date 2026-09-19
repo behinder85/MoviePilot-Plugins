@@ -52,7 +52,7 @@ class Dian115Client:
     _PROOF_MARGIN_SECONDS = 15
     _RISK_COOLDOWN_SECONDS = 60
     _SERVER_ERROR_COOLDOWN_SECONDS = 5
-    _PORTAL_COOKIES = ("__Host-portal_token", "__Host-portal_browser")
+    _PORTAL_COOKIES = ("portal_token", "__Host-portal_token", "__Host-portal_browser")
     _SESSION_DATA_KEY = "dian115_auth_session"
     _PROOF_RETRY_CODES = ("browser_proof_required", "browser_proof_invalid")
     _AUTH_RETRY_CODES = (
@@ -167,7 +167,29 @@ class Dian115Client:
         self._save_auth_cookie("")
 
     def _cookie(self, name: str) -> str:
-        return str(self._session.cookies.get_dict().get(name) or "")
+        try:
+            val = self._session.cookies.get(name)
+            if val:
+                return str(val)
+        except Exception:
+            pass
+        try:
+            val = self._session.cookies.get_dict().get(name)
+            if val:
+                return str(val)
+        except Exception:
+            pass
+        try:
+            for cookie in self._session.cookies:
+                c_name = getattr(cookie, "name", None)
+                if c_name == name and getattr(cookie, "value", None):
+                    return str(cookie.value)
+        except Exception:
+            pass
+        return ""
+
+    def _portal_token(self) -> str:
+        return self._cookie("portal_token") or self._cookie("__Host-portal_token")
 
     def _restore_auth_cookie(self) -> None:
         if not self._get_data_func:
@@ -182,8 +204,9 @@ class Dian115Client:
                 return
             token = str(data.get("token") or "")
             if token:
-                self._session.cookies.delete("__Host-portal_token")
-                self._session.cookies.set("__Host-portal_token", token, secure=True)
+                for cname in ("portal_token", "__Host-portal_token"):
+                    self._session.cookies.delete(cname)
+                    self._session.cookies.set(cname, token, secure=True)
                 self._saved_token = token
                 self._authenticated = True
         except Exception as error:
@@ -262,7 +285,7 @@ class Dian115Client:
                 timeout=self._timeout,
                 **kwargs,
             )
-            self._save_auth_cookie(self._cookie("__Host-portal_token"))
+            self._save_auth_cookie(self._portal_token())
             return response
         except requests.exceptions.RequestException as error:
             raise Dian115Error(f"Dian115 请求失败：{error}") from error
@@ -403,12 +426,38 @@ class Dian115Client:
                 require_login=False, allow_browser_login=allow_browser_login,
                 json={"email": self._email, "password": self._password},
             )
-            if not payload.get("user") or not self._cookie("__Host-portal_token"):
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            user = payload.get("user") or data.get("user") or (data if "points" in data or "email" in data else None)
+            token = (
+                    self._portal_token()
+                    or payload.get("token")
+                    or data.get("token")
+                    or payload.get("portal_token")
+                    or data.get("portal_token")
+            )
+            if token and not self._portal_token():
+                for cname in ("portal_token", "__Host-portal_token"):
+                    try:
+                        self._session.cookies.set(cname, str(token), secure=True)
+                    except Exception:
+                        pass
+                self._saved_token = str(token)
+
+            if not user or not token:
+                cookie_names = []
+                try:
+                    cookie_names = [getattr(c, "name", str(c)) for c in self._session.cookies]
+                except Exception:
+                    pass
+                logger.warning(
+                    f"Dian115 登录响应异常：payload_keys={list(payload.keys())}, data_keys={list(data.keys())}, cookies={cookie_names}"
+                )
                 raise Dian115Error(
                     "Dian115 登录响应缺少用户信息或认证 Cookie",
                     code="login_failed",
                 )
             self._authenticated = True
+            self._save_auth_cookie(token)
             logger.debug("Dian115 接口登录成功，已保存登录状态")
 
     def _request_json(
