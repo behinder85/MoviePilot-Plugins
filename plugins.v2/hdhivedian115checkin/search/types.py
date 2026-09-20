@@ -3,20 +3,12 @@
 from urllib.parse import urlparse
 
 TYPE_ALIASES = {
-    "115": "115",
     "115pan": "115",
-    "123": "123",
     "123pan": "123",
-    "quark": "quark",
-    "aliyun": "alipan",
     "ali": "alipan",
-    "alipan": "alipan",
+    "aliyun": "alipan",
     "189": "tianyi",
-    "tianyi": "tianyi",
-    "guangya": "guangya",
-    "magnet": "magnet",
     "magnetlink": "magnet",
-    "ed2k": "ed2k",
 }
 TYPE_HOSTS = {
     "115": {"115.com", "115cdn.com", "anxia.com"},
@@ -38,6 +30,8 @@ TYPE_NAMES = {
     "ed2k": "电驴链接",
     "tianyi": "天翼云盘",
     "guangya": "光鸭云盘",
+    "cloud": "网盘路径",
+    "share": "网盘分享",
 }
 
 SUPPORTED_CLOUD_TYPES = tuple(TYPE_HOSTS)

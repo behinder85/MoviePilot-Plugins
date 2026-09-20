@@ -81,7 +81,11 @@ class Dian115Client:
             timeout: int = 30,
             get_data_func: Optional[Callable] = None,
             save_data_func: Optional[Callable] = None,
+            lottery_enabled: bool = False,
+            lottery_count: int = 0,
     ):
+        self._lottery_enabled = bool(lottery_enabled)
+        self._lottery_count = max(0, int(lottery_count or 0))
         self._email = str(email or "").strip()
         self.base_url = str(base_url or self.BASE_URL).rstrip("/")
         self._password = str(password or "").strip()
@@ -594,7 +598,7 @@ class Dian115Client:
             allow_browser_login=False,
         )
 
-    def signin(self, mode: str = "normal") -> Dict[str, Any]:
+    def _signin(self, mode: str) -> Dict[str, Any]:
         """通过门户签到接口执行普通或运气签到。"""
         normalized_mode = str(mode or "normal").strip().lower()
         if normalized_mode not in {"normal", "lucky"}:
@@ -709,4 +713,68 @@ class Dian115Client:
             "cost_points": wheel_cost,
             "award_points": wheel_award,
             "vip_days": wheel_vip_days,
+        }
+
+    def checkin(self, mode: str = "normal") -> Dict[str, Any]:
+        """签到并按配置补齐当日幸运转盘；积分差额由服务层统一结算。"""
+        before = self.get_account_info()
+        signin = self._signin(mode)
+        lottery = (
+            self.run_lottery(self._lottery_count)
+            if self._lottery_enabled else {}
+        )
+        try:
+            after = self.get_account_info()
+        except Dian115Error:
+            # 签到链路禁止触发浏览器登录，账户接口失败时退回签到/转盘返回余额。
+            after = dict(before)
+            balance = lottery.get("new_balance", signin.get("new_balance"))
+            if balance is not None:
+                after["points"] = balance
+
+        points_before = int(before.get("points") or 0)
+        points_after = int(after.get("points") or 0)
+        awarded = signin.get("award_points")
+        if signin.get("already_checked_in"):
+            label = "今日已签到"
+        elif isinstance(awarded, (int, float)):
+            label = f"签到 {int(awarded):+d}"
+        else:
+            label = "签到完成"
+        parts = [label]
+        if lottery:
+            parts.append(
+                f"转盘 {lottery.get('used_after') or 0}/"
+                f"{lottery.get('target_count') or self._lottery_count}"
+            )
+            if not lottery.get("success"):
+                parts.append(
+                    f"转盘未完成：{lottery.get('message') or '接口返回失败'}"
+                )
+        success = bool(signin.get("success") and lottery.get("success", True))
+        return {
+            "success": success,
+            "status": (
+                "今日已签到"
+                if signin.get("already_checked_in") and not lottery
+                else "签到完成" if success else "签到未完成"
+            ),
+            "message": "；".join(parts),
+            "mode": mode,
+            # 收益明细由服务层按余额差额结算，渠道只回传原始字段。
+            "signin_points": awarded,
+            "points_before": points_before,
+            "points_after": points_after,
+            "signin_days": int(
+                after.get("consecutive_signin")
+                or signin.get("signin_days")
+                or 0
+            ),
+            "status_code": int(
+                lottery.get("status_code") or signin.get("status_code") or 0
+            ),
+            "error_code": str(
+                lottery.get("error_code") or signin.get("error_code") or ""
+            ),
+            "lottery": lottery or None,
         }
