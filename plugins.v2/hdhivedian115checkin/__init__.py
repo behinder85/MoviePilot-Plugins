@@ -28,7 +28,7 @@ class HDHiveDian115Checkin(_PluginBase):
     plugin_name = "HDHive / Dian115 签到"
     plugin_desc = "仅保留 HDHive 与 Dian115 两个渠道的每日签到、转盘和通知功能。"
     plugin_icon = "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/hdhivedian115checkin.png"
-    plugin_version = "1.0.8"
+    plugin_version = "1.0.9"
     plugin_author = "odomu"
     author_url = "https://github.com/odomu/MoviePilot-Plugins"
     plugin_config_prefix = "hdhive_dian115_checkin_"
