@@ -4,14 +4,12 @@ import base64
 import contextlib
 import hashlib
 import json
-import os
 import re
 import threading
 import time
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urljoin, urlsplit
 
-from app.core.config import settings
 from app.log import logger
 
 from .action import ServerActionProtocol, ServerActionResponse
@@ -38,8 +36,7 @@ from ...http_client import (
 )
 from ....utils.cache import create_platform_ttl_cache
 
-# 多实例共享的会话文件锁，保证 Cookie 串行写入。
-_SESSION_FILE_LOCK = threading.RLock()
+
 class HDHiveWebError(RuntimeError):
     """HDHive WebAPI 请求、认证或协议错误。"""
 
@@ -117,17 +114,14 @@ class HDHiveClient:
     """维护网页登录 Cookie、安全会话和统一请求限速。"""
 
     BASE_URL = "https://re0.me"
-    _SESSION_FILE = (
-            settings.PLUGIN_DATA_PATH
-            / "CloudSubscribe"
-            / "hdhive-curl-session.json"
-    )
+    _SESSION_DATA_KEY = "hdhive_auth_session"
     _RISK_COOLDOWN_SECONDS = 30
     _SOFT_RISK_COOLDOWN_SECONDS = 2 * 60
     _SERVER_ERROR_COOLDOWN_SECONDS = 5
     _MAX_REQUESTS_PER_MINUTE = 10
     _RISK_COOLDOWN_CACHE_TTL = 3 * 60
     _BIND_SECRETS: Dict[str, str] = {}
+
     def __init__(
             self,
             username: str,
@@ -136,12 +130,16 @@ class HDHiveClient:
             request_interval: float = 5.0,
             timeout: int = 30,
             should_stop: Optional[Callable[[], bool]] = None,
+            get_data_func: Optional[Callable] = None,
+            save_data_func: Optional[Callable] = None,
     ):
         self._username = str(username or "").strip()
         self._password = str(password or "")
         self._proxies = normalize_proxies(proxy)
         self._timeout = max(5, min(int(timeout or 30), 120))
         self._should_stop = should_stop
+        self._get_data_func = get_data_func
+        self._save_data_func = save_data_func
         self._session_key = hashlib.sha256(
             f"{self.BASE_URL}\0{self._username}".encode("utf-8")
         ).hexdigest()
@@ -589,35 +587,30 @@ class HDHiveClient:
         self._login_with_sequence()
 
     def _load_cookies(self) -> None:
-        with _SESSION_FILE_LOCK:
-            try:
-                payload = json.loads(
-                    self._SESSION_FILE.read_text(encoding="utf-8")
-                )
-                account = (
-                        payload.get("accounts", {}).get(self._session_key) or {}
-                )
-                if isinstance(account, list):
-                    cookies = account
-                else:
-                    cookies = account.get("cookies") or []
-                    self._bind_secret = str(
-                        account.get("bind_secret")
-                        or self._BIND_SECRETS.get(self._session_key)
-                        or ""
-                    )
-            except (
-                    FileNotFoundError, json.JSONDecodeError,
-                    OSError, AttributeError,
+        """从数据库恢复持久化的登录 Cookie 和 bind_secret。"""
+        if not self._get_data_func:
+            return
+        try:
+            data = self._get_data_func(self._SESSION_DATA_KEY) or {}
+            if (
+                    not isinstance(data, dict)
+                    or str(data.get("username") or "").strip() != self._username
             ):
                 return
+            cookies = data.get("cookies") or []
+            self._bind_secret = str(
+                data.get("bind_secret")
+                or self._BIND_SECRETS.get(self._session_key)
+                or ""
+            )
+        except Exception as error:
+            logger.debug(f"HDHive 恢复登录 Cookie 失败：{error}")
+            return
         now = time.time()
         for cookie in cookies:
             if not isinstance(cookie, dict):
                 continue
-            if not is_persistent_cookie(
-                    str(cookie.get("name") or "")
-            ):
+            if not is_persistent_cookie(str(cookie.get("name") or "")):
                 continue
             expires = float(cookie.get("expires") or 0)
             if expires > 0 and expires <= now:
@@ -637,6 +630,9 @@ class HDHiveClient:
             self._BIND_SECRETS[self._session_key] = self._bind_secret
 
     def _save_cookies(self) -> None:
+        """将当前登录 Cookie 和 bind_secret 持久化到数据库。"""
+        if not self._save_data_func:
+            return
         cookies = []
         try:
             for cookie in self._session.cookies.jar:
@@ -652,37 +648,20 @@ class HDHiveClient:
                 })
         except Exception:
             return
-        with _SESSION_FILE_LOCK:
-            payload: Dict[str, Any] = {"version": 1, "accounts": {}}
-            try:
-                current = json.loads(
-                    self._SESSION_FILE.read_text(encoding="utf-8")
-                )
-                if isinstance(current, dict) and isinstance(
-                        current.get("accounts"), dict
-                ):
-                    payload = current
-            except (FileNotFoundError, json.JSONDecodeError, OSError):
-                pass
-            payload["version"] = 1
-            payload.setdefault("accounts", {})[self._session_key] = {
-                "cookies": cookies,
-                "bind_secret": self._bind_secret,
-            }
-            try:
-                session_file = self._SESSION_FILE
-                session_file.parent.mkdir(parents=True, exist_ok=True)
-                temp_file = session_file.with_suffix(".tmp")
-                temp_file.write_text(
-                    json.dumps(
-                        payload, ensure_ascii=False, separators=(",", ":")
-                    ),
-                    encoding="utf-8",
-                )
-                os.chmod(temp_file, 0o600)
-                os.replace(temp_file, session_file)
-            except OSError as error:
-                logger.debug(f"保存 HDHive WebAPI Cookie 失败：{error}")
+        if not cookies:
+            return
+        try:
+            self._save_data_func(
+                self._SESSION_DATA_KEY,
+                {
+                    "username": self._username,
+                    "cookies": cookies,
+                    "bind_secret": self._bind_secret,
+                    "updated_at": int(time.time()),
+                },
+            )
+        except Exception as error:
+            logger.debug(f"HDHive 持久化登录 Cookie 失败：{error}")
 
     def _user_id(self) -> str:
         """取得签名用户 ID。"""
