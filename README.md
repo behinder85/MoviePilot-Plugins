@@ -43,6 +43,16 @@
 
 插件同时提供三个手动命令：`/hdhive_checkin`、`/dian115_checkin`、`/checkin_all`。
 
+## 上游契约适配
+
+`search/` 下的客户端代码由上游同步，方法签名会随上游重构而变化。本仓库的 `checkin_service.py` 做了一层契约适配：
+
+- 构造客户端时按真实签名过滤关键字参数，上游新增或改名参数都不会抛出 `unexpected keyword argument`；上游新增必填参数时由契约校验直接拦下。
+- 调用签到入口时按真实签名分发：优先 `checkin(mode=...)`，其次兼容旧版 `checkin(is_gambler=...)`，再退化到位置参数或无参调用；旧版只提供 `signin` 的 Dian115 客户端会走 `signin + run_lottery` 兜底。
+- 签到记录里的 `points_change`、`signin_points`、`signin_days` 由服务层统一折算，即使渠道只回传 `points_before` / `points_after` 也能得到正确结果。
+
+`scripts/check-client-contract.py` 会核对上述契约（签到入口、签到模式、账号凭据、Dian115 转盘能力、构造必填参数、同步清单覆盖）。只要上游改动破坏了其中任何一项，同步与发布 Workflow 都会直接失败并打印适配提示，不会把无法签到的版本自动发布出去；契约通过且文件有变化时才会自动升版本并重建 Release。
+
 ## 详情数据页
 
 插件实现了 `get_page`，因此插件卡片的配置页会出现 **查看数据** 按钮，点开后即为详情数据页：
@@ -79,6 +89,7 @@ GET  /api/v1/plugin/HDHiveDian115Checkin/refresh
 │   ├── sync-upstream.py                 # 上游代码同步
 │   ├── bump-version.py                  # 版本与更新日志维护
 │   ├── check-plugin.py                  # 插件规范静态校验
+│   ├── check-client-contract.py         # 上游签到客户端契约校验
 │   ├── build-release.py                 # 生成 Release 压缩包与发布清单
 │   ├── publish-release.py               # 发布 GitHub Release
 │   └── upload-to-github.ps1             # 本地首次上传脚本
@@ -103,8 +114,9 @@ GET  /api/v1/plugin/HDHiveDian115Checkin/refresh
 
 1. 克隆上游 `odomu/MoviePilot-Plugins`。
 2. 运行 `python scripts/sync-upstream.py /tmp/MoviePilot-Plugins`，只覆盖 HDHive / Dian115 客户端及最小依赖文件。
-3. 检测到变化时运行 `python scripts/bump-version.py`，自动提升补丁版本并写入更新日志。
-4. 推送变更，随后重建 GitHub Release。
+3. 运行 `python scripts/check-client-contract.py` 校验上游签到契约；失败则直接终止，等待人工适配。
+4. 检测到变化时运行 `python scripts/bump-version.py`，自动提升补丁版本并写入更新日志。
+5. 推送变更，随后重建 GitHub Release。
 
 上游提交后，MoviePilot 会在下一次刷新插件市场时看到新版本。也可以手动触发该 Workflow 立即同步。
 
@@ -119,8 +131,9 @@ python scripts/sync-upstream.py C:\path\to\MoviePilot-Plugins
 # 提升版本（默认 patch）
 python scripts/bump-version.py --message "说明本次变更"
 
-# 本地校验：规范检查 + 编译 + 打包
+# 本地校验：规范检查 + 上游契约 + 编译 + 打包
 python scripts/check-plugin.py
+python scripts/check-client-contract.py
 python -m compileall plugins.v2 scripts
 python scripts/build-release.py --out dist
 python scripts/publish-release.py --dist dist --dry-run

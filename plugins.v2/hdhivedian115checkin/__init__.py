@@ -19,7 +19,7 @@ from app.plugins import _PluginBase
 from app.schemas.types import EventType, NotificationType
 
 from .checkin_service import HDHiveDian115CheckinService
-from .search.hdhive import HDHiveClient, HDHiveOpenAPIClient, HDHiveOpenAPIError
+from .search.hdhive import HDHiveOpenAPIClient, HDHiveOpenAPIError
 
 
 class HDHiveDian115Checkin(_PluginBase):
@@ -28,7 +28,7 @@ class HDHiveDian115Checkin(_PluginBase):
     plugin_name = "HDHive / Dian115 签到"
     plugin_desc = "仅保留 HDHive 与 Dian115 两个渠道的每日签到、转盘和通知功能。"
     plugin_icon = "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/hdhivedian115checkin.png"
-    plugin_version = "1.0.11"
+    plugin_version = "1.0.12"
     plugin_author = "odomu"
     author_url = "https://github.com/odomu/MoviePilot-Plugins"
     plugin_config_prefix = "hdhive_dian115_checkin_"
@@ -79,7 +79,6 @@ class HDHiveDian115Checkin(_PluginBase):
 
         data_path = Path(self.get_data_path())
         data_path.mkdir(parents=True, exist_ok=True)
-        HDHiveClient._SESSION_FILE = data_path / "hdhive-curl-session.json"
 
         if self._hdhive_query_mode == "api":
             self._init_hdhive_openapi_client()

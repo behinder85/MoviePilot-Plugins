@@ -33,6 +33,9 @@ jobs:
       - name: Check plugin conventions
         run: python scripts/check-plugin.py
 
+      - name: Verify upstream checkin contract
+        run: python scripts/check-client-contract.py
+
       - name: Build release archives
         run: python scripts/build-release.py --out dist
 

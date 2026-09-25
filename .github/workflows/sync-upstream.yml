@@ -1,7 +1,8 @@
 name: Sync HDHive/Dian115 Checkin
 
 # 每天 UTC 16:00（北京时间 00:00）从上游同步签到客户端代码；
-# 有变化时自动提升补丁版本、推送并重建 Release，保证插件市场安装到最新代码。
+# 同步后先校验上游签到契约，通过且有变化时自动提升补丁版本、推送并重建 Release，
+# 保证插件市场安装到最新代码；契约被破坏时直接失败，等待人工适配后再发布。
 on:
   schedule:
     - cron: "0 16 * * *"
@@ -34,6 +35,11 @@ jobs:
 
       - name: Sync HDHive / Dian115 client files
         run: python scripts/sync-upstream.py /tmp/MoviePilot-Plugins
+
+      # 上游一旦重构 checkin/构造参数，这里会直接失败并给出适配提示，
+      # 避免把无法签到的客户端代码自动发布出去。
+      - name: Verify upstream checkin contract
+        run: python scripts/check-client-contract.py
 
       - name: Check plugin conventions
         run: python scripts/check-plugin.py

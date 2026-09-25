@@ -5,6 +5,7 @@
 """
 
 import copy
+import inspect
 import threading
 import uuid
 from dataclasses import dataclass
@@ -79,6 +80,75 @@ class HDHiveDian115CheckinService:
     def _now_text() -> str:
         return HDHiveDian115CheckinService._now().isoformat(timespec="seconds")
 
+    @staticmethod
+    def _parse_executed_at(record: Dict[str, Any]) -> datetime:
+        """把记录时间解析为本地时区时间；格式非法时抛出 ValueError。"""
+        executed_at = datetime.fromisoformat(str(record.get("executed_at") or ""))
+        timezone = pytz.timezone(settings.TZ)
+        if executed_at.tzinfo is None:
+            executed_at = timezone.localize(executed_at)
+        return executed_at.astimezone(timezone)
+
+    @classmethod
+    def _record_date_key(cls, record: Dict[str, Any]) -> str:
+        value = str(record.get("executed_at") or "").strip()
+        if not value:
+            return ""
+        try:
+            return cls._parse_executed_at(record).strftime("%Y-%m-%d")
+        except ValueError:
+            return value[:10]
+
+    @staticmethod
+    def _number(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def _calculate_signin_days(
+            cls,
+            history: List[Dict[str, Any]],
+            current_date_key: str = "",
+            current_success: bool = False,
+            raw_signin_days: Any = None,
+    ) -> Optional[int]:
+        """综合本地打卡历史与渠道返回，计算累计签到天数。"""
+        signed_dates = {
+            cls._record_date_key(item)
+            for item in (history or [])
+            if item.get("success") and cls._record_date_key(item)
+        }
+        if current_success and current_date_key:
+            signed_dates.add(current_date_key)
+        local_days = len(signed_dates)
+        remote_days = None
+        if raw_signin_days is not None and str(raw_signin_days).strip() != "":
+            try:
+                value = int(raw_signin_days)
+                if value > 0:
+                    remote_days = value
+            except (TypeError, ValueError):
+                remote_days = None
+        if remote_days is None:
+            for item in reversed(history or []):
+                item_days = item.get("signin_days")
+                if item_days is None or str(item_days).strip() == "":
+                    continue
+                try:
+                    value = int(item_days)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    remote_days = value
+                    break
+        if remote_days is not None and local_days > 0:
+            return max(remote_days, local_days)
+        if remote_days is not None:
+            return remote_days
+        return local_days if local_days > 0 else None
+
     @classmethod
     def _resolve_provider(cls, provider: str) -> Optional[CheckinProvider]:
         return cls._PROVIDERS.get(str(provider or "").strip().lower())
@@ -109,6 +179,56 @@ class HDHiveDian115CheckinService:
         ):
             return "请先配置 HDHive OpenAPI 应用 Secret 和用户授权"
         return f"请先配置并保存 {provider.name} 账号和密码"
+
+    @staticmethod
+    def _accepts(callable_obj, name: str) -> bool:
+        """判断可调用对象是否接受某个关键字参数。"""
+        try:
+            parameters = inspect.signature(callable_obj).parameters
+        except (TypeError, ValueError):
+            return False
+        if name in parameters:
+            return True
+        return any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+
+    @staticmethod
+    def _accepts_positional(callable_obj) -> bool:
+        """判断可调用对象是否接受一个位置参数（用于上游重命名场景）。"""
+        try:
+            parameters = list(inspect.signature(callable_obj).parameters.values())
+        except (TypeError, ValueError):
+            return False
+        return any(
+            parameter.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+            for parameter in parameters
+        )
+
+    @staticmethod
+    def _build_client(factory, **candidates):
+        """仅传递目标构造函数真实支持的参数。
+
+        上游客户端会持续增删构造参数，这里按真实签名过滤，避免实例化直接失败。
+        """
+        try:
+            parameters = inspect.signature(factory).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+        ):
+            return factory(**candidates)
+        return factory(**{
+            key: value
+            for key, value in candidates.items()
+            if key in parameters
+        })
 
     def _get_hdhive_client(self):
         owner = self._owner
@@ -143,11 +263,14 @@ class HDHiveDian115CheckinService:
                     client.close()
                 except Exception as error:
                     logger.debug(f"关闭旧 HDHive 客户端失败：{error}")
-            client = HDHiveClient(
-                username=str(getattr(owner, "_hdhive_username", "") or "").strip(),
-                password=str(getattr(owner, "_hdhive_password", "") or ""),
+            client = self._build_client(
+                HDHiveClient,
+                username=signature[0],
+                password=signature[1],
                 proxy=self._normalized_proxy(),
                 request_interval=signature[3],
+                get_data_func=owner.get_data,
+                save_data_func=owner.save_data,
                 should_stop=lambda: bool(
                     getattr(owner, "_stop_event", None)
                     and owner._stop_event.is_set()
@@ -157,8 +280,20 @@ class HDHiveDian115CheckinService:
             self._hdhive_web_signature = signature
         return client
 
+    def _lottery_target(self) -> int:
+        """配置中启用的转盘目标次数，未启用时为 0。"""
+        if not getattr(self._owner, "_dian115_lottery_enabled", False):
+            return 0
+        try:
+            return max(
+                0, int(getattr(self._owner, "_dian115_lottery_count", 0) or 0)
+            )
+        except (TypeError, ValueError):
+            return 0
+
     def _get_dian115_client(self):
         owner = self._owner
+        lottery_target = self._lottery_target()
         signature = (
             str(getattr(owner, "_dian115_email", "") or "").strip(),
             str(getattr(owner, "_dian115_password", "") or ""),
@@ -171,6 +306,7 @@ class HDHiveDian115CheckinService:
                     10.0,
                 ),
             ),
+            lottery_target,
         )
         client = self._dian115_client
         if client is None or self._dian115_signature != signature:
@@ -179,15 +315,18 @@ class HDHiveDian115CheckinService:
                     client.close()
                 except Exception as error:
                     logger.debug(f"关闭旧 Dian115 客户端失败：{error}")
-            client = Dian115Client(
+            client = self._build_client(
+                Dian115Client,
                 email=signature[0],
                 password=signature[1],
                 base_url=signature[2],
                 proxy=self._normalized_proxy(),
                 request_interval=signature[4],
                 unlocks_per_minute=6,
-                get_data_func=self._owner.get_data,
-                save_data_func=self._owner.save_data,
+                lottery_enabled=bool(lottery_target),
+                lottery_count=lottery_target,
+                get_data_func=owner.get_data,
+                save_data_func=owner.save_data,
             )
             self._dian115_client = client
             self._dian115_signature = signature
@@ -308,16 +447,40 @@ class HDHiveDian115CheckinService:
             result: Optional[Dict[str, Any]] = None,
             error: Optional[Exception] = None,
     ) -> Dict[str, Any]:
-        data = result or {}
-        lottery = data.get("lottery") if isinstance(data, dict) else None
+        data = result if isinstance(result, dict) else {}
+        lottery = data.get("lottery")
         lottery = lottery if isinstance(lottery, dict) else {}
         success = bool(data.get("success")) if result is not None else False
         default_message = "" if result is not None else str(error or "签到失败")
+        points_before = data.get("points_before")
+        points_after = data.get("points_after")
+        # 上游只保证 points_before/points_after，这里统一折算积分变化。
+        points_change = data.get("points_change")
+        if points_change is not None:
+            points_change = self._number(points_change)
+        elif points_before is not None and points_after is not None:
+            points_change = self._number(points_after) - self._number(points_before)
+        signin_points = data.get("signin_points")
+        if signin_points is not None:
+            signin_points = self._number(signin_points)
+        elif points_change is not None:
+            # 未单独返回签到收益时，用总变化扣除转盘净收支。
+            signin_points = points_change - (
+                self._number(lottery.get("award_points"))
+                - self._number(lottery.get("cost_points"))
+            )
+        executed_at_text = self._now_text()
+        signin_days = self._calculate_signin_days(
+            history=self._load_history(provider),
+            current_date_key=executed_at_text[:10],
+            current_success=success,
+            raw_signin_days=data.get("signin_days"),
+        )
         return {
             "id": f"{provider.key}-{uuid.uuid4().hex}",
             "provider": provider.key,
             "provider_name": provider.name,
-            "executed_at": self._now_text(),
+            "executed_at": executed_at_text,
             "trigger": str(trigger or "manual"),
             "mode": mode,
             "success": success,
@@ -325,11 +488,11 @@ class HDHiveDian115CheckinService:
                 "签到成功" if success else "签到失败"
             )),
             "message": str(data.get("message") or default_message),
-            "points_change": data.get("points_change"),
-            "points_before": data.get("points_before"),
-            "points_after": data.get("points_after"),
-            "signin_days": data.get("signin_days"),
-            "signin_points": data.get("signin_points"),
+            "points_change": points_change,
+            "points_before": points_before,
+            "points_after": points_after,
+            "signin_days": signin_days,
+            "signin_points": signin_points,
             "lottery_target_count": lottery.get("target_count"),
             "lottery_executed": lottery.get(
                 "used_after", lottery.get("executed")
@@ -419,97 +582,108 @@ class HDHiveDian115CheckinService:
             text="\n".join(lines),
         )
 
-    def _run_dian115_actions(
-            self, client: Dian115Client, mode: str
+    def _legacy_signin_checkin(
+            self, client, signin, mode: str
     ) -> Dict[str, Any]:
+        """兼容仅提供 signin + run_lottery 的旧版 Dian115 客户端。"""
         before = client.get_account_info()
-        signin = client.signin(mode=mode)
-        lottery_count = (
-            int(getattr(self._owner, "_dian115_lottery_count", 0) or 0)
-            if getattr(self._owner, "_dian115_lottery_enabled", False)
-            else 0
-        )
+        result = signin(mode=mode) if self._accepts(signin, "mode") else signin()
+        lottery_target = self._lottery_target()
+        run_lottery = getattr(client, "run_lottery", None)
         lottery = (
-            client.run_lottery(lottery_count)
-            if lottery_count else {
-                "success": True,
-                "target_count": 0,
-                "executed": 0,
-                "cost_points": 0,
-                "award_points": 0,
-                "vip_days": 0,
-            }
+            run_lottery(lottery_target)
+            if lottery_target and callable(run_lottery)
+            else {}
         )
         try:
             after = client.get_account_info()
-        except Dian115Error:
+        except Exception:
             after = dict(before)
             fallback_balance = (
                 lottery.get("new_balance")
                 if lottery.get("new_balance") is not None
-                else signin.get("new_balance")
+                else result.get("new_balance")
             )
             if fallback_balance is not None:
                 after["points"] = fallback_balance
         points_before = int(before.get("points") or 0)
         points_after = int(after.get("points") or 0)
-        signin_points = signin.get("award_points")
-        if signin_points is None:
-            signin_points = (
+        awarded = result.get("award_points")
+        if awarded is None:
+            awarded = (
                     points_after - points_before
                     - int(lottery.get("points_change") or 0)
             )
-        signin_label = (
-            "今日已签到"
-            if signin.get("already_checked_in")
-            else f"签到 {self._signed_points(signin_points)}"
-        )
-        parts = [signin_label]
-        if lottery_count:
+        if result.get("already_checked_in"):
+            label = "今日已签到"
+        elif isinstance(awarded, (int, float)):
+            label = f"签到 {int(awarded):+d}"
+        else:
+            label = "签到完成"
+        parts = [label]
+        if lottery_target:
             parts.append(
                 f"转盘 {lottery.get('used_after') or 0}/"
-                f"{lottery.get('target_count') or lottery_count}"
+                f"{lottery.get('target_count') or lottery_target}"
             )
-        if not lottery.get("success"):
-            parts.append(
-                f"转盘未完成：{lottery.get('message') or '接口返回失败'}"
-            )
-        success = bool(signin.get("success") and lottery.get("success"))
+            if not lottery.get("success"):
+                parts.append(
+                    f"转盘未完成：{lottery.get('message') or '接口返回失败'}"
+                )
+        success = bool(result.get("success") and lottery.get("success", True))
         return {
             "success": success,
             "status": (
                 "今日已签到"
-                if signin.get("already_checked_in") and not lottery_count
+                if result.get("already_checked_in") and not lottery
                 else "签到完成" if success else "签到未完成"
             ),
             "message": "；".join(parts),
             "mode": mode,
-            "signin_points": signin_points,
+            "signin_points": awarded,
             "points_change": points_after - points_before,
             "points_before": points_before,
             "points_after": points_after,
             "signin_days": int(
                 after.get("consecutive_signin")
-                or signin.get("signin_days")
+                or result.get("signin_days")
                 or 0
             ),
             "status_code": int(
-                lottery.get("status_code") or signin.get("status_code") or 0
+                lottery.get("status_code") or result.get("status_code") or 0
             ),
             "error_code": str(
-                lottery.get("error_code") or signin.get("error_code") or ""
+                lottery.get("error_code") or result.get("error_code") or ""
             ),
-            "lottery": lottery,
+            "lottery": lottery or None,
         }
 
     def _execute_provider_checkin(
             self, provider: CheckinProvider, client, mode: str
     ) -> Dict[str, Any]:
-        if provider.key == "dian115":
-            return self._run_dian115_actions(client, mode)
-        if provider.key == "hdhive":
-            return client.checkin(is_gambler=mode == "gambler")
-        return client.checkin()
+        """调用渠道签到入口，并按真实签名适配上游 API 变更。
+
+        上游已把两个渠道统一为 ``checkin(mode="normal"|"gambler"|"lucky")``，
+        这里按实际签名分发：``mode`` 参数、旧的 ``is_gambler`` 参数以及只提供
+        ``signin`` 的旧版 Dian115 客户端都能继续工作，避免上游调整参数后
+        签到链路直接抛出 TypeError / AttributeError。
+        """
+        checkin = getattr(client, "checkin", None)
+        if callable(checkin):
+            if self._accepts(checkin, "mode"):
+                return checkin(mode=mode)
+            if self._accepts(checkin, "is_gambler"):
+                return checkin(is_gambler=(mode == "gambler"))
+            if self._accepts_positional(checkin):
+                return checkin(mode)
+            return checkin()
+        signin = getattr(client, "signin", None)
+        if callable(signin):
+            return self._legacy_signin_checkin(client, signin, mode)
+        raise TypeError(
+            f"{type(client).__name__} 未提供可用的签到入口（缺少 checkin/signin 方法），"
+            f"{provider.name} 渠道无法签到；上游客户端可能已重构，请重新同步后更新插件"
+        )
 
     def _prepare_checkin(
             self, provider: str, mode: str, require_enabled: bool = True
