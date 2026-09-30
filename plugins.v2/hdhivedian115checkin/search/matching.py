@@ -38,7 +38,11 @@ _SEASON_EPISODE_TAG_RE = re.compile(
     r"^(?:s\d+|e\d+|ep\d+|第[0-9一二三四五六七八九十]+[季期集]|19\d\d|20\d\d)$",
     re.IGNORECASE
 )
+_RESOURCE_WORD_SPLIT_RE = re.compile(
+    r"[\s\u3000:：·•.,，。!！?？（）【】\[\]/／\\＼_-]+|(?<=[a-zA-Z])(?=\d)|(?<=\d)(?=[a-zA-Z])"
+)
 _TAG_SPLIT_RE = re.compile(r"[\s,，;；|/]+")
+
 
 def unique_texts(
         values: Iterable[object],
@@ -135,6 +139,14 @@ def extract_season(value: object) -> Optional[int]:
     return None
 
 
+def normalize_season(value: Any, default: int = 1) -> int:
+    """规范化季号：None 或空字符串回退默认季号；0 视为真实的特别篇 S00。"""
+    try:
+        return max(0, int(default if value is None or value == "" else value))
+    except (TypeError, ValueError):
+        return default
+
+
 def title_without_season(value: object) -> str:
     """移除季号后生成标题指纹，用于剧集作品级匹配。"""
     text = unicodedata.normalize("NFKC", html.unescape(str(value or "")))
@@ -153,6 +165,51 @@ def title_matches(candidate: object, expected_titles: Iterable[object]) -> bool:
         for expected in expected_titles
         if str(expected or "").strip()
     )
+
+
+def resource_title_matches(
+        resource_title: object,
+        expected_titles: Iterable[object],
+        expected_year: Optional[object] = None,
+        strict_year: bool = False,
+) -> bool:
+    """检查资源/发布标题中是否包含至少一个目标媒体标题（按词边界匹配）。"""
+    raw_res = str(resource_title or "").strip()
+    if not raw_res:
+        return False
+    norm_res = unicodedata.normalize("NFKC", html.unescape(raw_res)).casefold()
+    comp_res = _RESOURCE_WORD_SPLIT_RE.sub(" ", norm_res).strip()
+    if not comp_res:
+        return False
+
+    exp_year = str(expected_year or "").strip()
+    if strict_year and exp_year:
+        years = set(re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", norm_res))
+        if years and exp_year not in years:
+            return False
+
+    def is_word_char(ch: str) -> bool:
+        return bool(ch) and (ch.isalnum() or "\u3400" <= ch <= "\u9fff")
+
+    for raw_title in expected_titles:
+        if not raw_title:
+            continue
+        norm_title = unicodedata.normalize("NFKC", html.unescape(str(raw_title))).casefold()
+        comp_title = _RESOURCE_WORD_SPLIT_RE.sub(" ", norm_title).strip()
+        if not comp_title:
+            continue
+        start = 0
+        while True:
+            idx = comp_res.find(comp_title, start)
+            if idx < 0:
+                break
+            prev_char = comp_res[idx - 1] if idx > 0 else ""
+            next_idx = idx + len(comp_title)
+            next_char = comp_res[next_idx] if next_idx < len(comp_res) else ""
+            if not is_word_char(prev_char) and not is_word_char(next_char):
+                return True
+            start = idx + 1
+    return False
 
 
 def extract_year(value: object) -> str:
@@ -335,5 +392,30 @@ def extract_resource_tags(
                     break
             if len(specs) >= 8:
                 break
-
     return specs
+
+
+def media_aliases(mediainfo: Any) -> List[str]:
+    """提取媒体元数据中附带的多语言译名与别名。"""
+    if not mediainfo:
+        return []
+    names = getattr(mediainfo, "names", None)
+    alias_list: List[str] = list(names) if isinstance(names, (list, tuple)) else []
+    for field in ("en_title", "hk_title", "tw_title", "sg_title", "cn_name", "en_name"):
+        val = getattr(mediainfo, field, None)
+        if val and isinstance(val, str):
+            alias_list.append(val)
+    return unique_texts(alias_list)
+
+
+def search_keyword_candidates(
+        base_titles: Iterable[Any],
+        aliases: Iterable[Any],
+        limit: int = 6,
+) -> List[str]:
+    """构建优先包含中英文等多译名的高优先级搜索关键词序列。"""
+    base = unique_texts(base_titles)
+    alias_items = unique_texts(aliases)
+    chinese_aliases = [t for t in alias_items if re.search(r"[\u4e00-\u9fff]", t)]
+    ordered = unique_texts([*base[:1], *chinese_aliases, *base[1:], *alias_items])
+    return ordered[:limit]
