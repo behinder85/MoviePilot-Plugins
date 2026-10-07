@@ -139,6 +139,36 @@ def resource_type_from_text(value: str) -> str:
     return ""
 
 
+#: 占位/描述性键不参与面板识别，避免把 “other/未知” 误判成真实资源类型。
+_NON_RESOURCE_TYPE_KEYS = frozenset({"cloud", "share", "unknown", "other"})
+
+#: 面板平台键/展示名 -> 内部类型：由 RESOURCE_TYPE_DISPLAY 反向派生，
+#: 不再单独维护标签表（键名同样参与匹配，覆盖 DOM 里的 baidu/uc/xunlei 等）。
+_PANEL_PLATFORM_TYPES = {
+    **{
+        str(key).casefold(): str(key)
+        for key in RESOURCE_TYPE_DISPLAY
+        if str(key).casefold() not in _NON_RESOURCE_TYPE_KEYS
+    },
+    **{
+        str(meta.get("name") or "").casefold(): str(key)
+        for key, meta in RESOURCE_TYPE_DISPLAY.items()
+        if str(meta.get("name") or "").strip()
+           and str(key).casefold() not in _NON_RESOURCE_TYPE_KEYS
+    },
+}
+
+
+def resource_type_from_panel(value: str) -> str:
+    """识别资源站点面板的平台键或展示名，无法识别时返回空串。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return resource_type_from_text(text) or _PANEL_PLATFORM_TYPES.get(
+        text.casefold(), ""
+    )
+
+
 def resource_type_name(value: str, fallback: str = "") -> str:
     normalized = normalize_resource_type(value)
     return TYPE_NAMES.get(normalized) or str(fallback or normalized).strip()

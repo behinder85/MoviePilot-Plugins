@@ -1,9 +1,9 @@
 """搜索渠道共用的 Cloudflare 页面识别与浏览器操作。"""
 
-from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, Optional
 from urllib.parse import unquote, urlparse, urlsplit
 
 from app.core.config import settings
@@ -96,6 +96,253 @@ def launch_challenge_context(proxy: Any):
     )
 
 
+def block_heavy_resources(page) -> None:
+    """拦截图片、多媒体与字体等无关资源，降低带宽与渲染耗时。"""
+
+    def _route_filter(route):
+        try:
+            url = str(route.request.url or "").lower()
+            if "challenges.cloudflare.com" in url or "cloudflare" in url:
+                route.continue_()
+                return
+            if route.request.resource_type in {"image", "media", "font"}:
+                route.abort()
+                return
+        except Exception:
+            pass
+        try:
+            route.continue_()
+        except Exception:
+            pass
+
+    try:
+        page.route("**/*", _route_filter)
+    except Exception:
+        pass
+
+
+#: 本地 Turnstile 挂载页：渠道用它渲染官方组件并换取一次性 token。
+TURNSTILE_MOUNT_HTML = """<!doctype html><html><head><meta charset="utf-8">
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+</head><body><div id="verification" style="margin:80px"></div></body></html>"""
+
+_TURNSTILE_RENDER_TEMPLATE = """
+({siteKey, action}) => {
+    const stateName = '__STATE__';
+    const previous = window[stateName];
+    try {
+        if (previous && previous.widget !== undefined) window.turnstile.remove(previous.widget);
+    } catch (e) {}
+    const state = {token: '', error: '', interactive: false};
+    window[stateName] = state;
+    state.widget = window.turnstile.render('#verification', {
+        sitekey: siteKey, action: action || 'login', theme: 'light', language: 'zh-CN',
+        appearance: 'interaction-only', execution: 'execute',
+        'response-field': false,
+        callback: token => { state.token = token; },
+        'error-callback': code => { state.error = String(code || 'verification_failed'); },
+        'expired-callback': () => { state.error = 'token_expired'; },
+        'timeout-callback': () => { state.error = 'verification_timeout'; },
+        'before-interactive-callback': () => { state.interactive = true; }
+    });
+    window.turnstile.execute(state.widget);
+}
+"""
+
+
+def turnstile_render_script(state_name: str) -> str:
+    """生成渲染并执行 Turnstile 的页面脚本；``state_name`` 为状态全局变量名。"""
+    return _TURNSTILE_RENDER_TEMPLATE.replace("__STATE__", str(state_name or "verification"))
+
+
+def mount_turnstile_page(page, url: str) -> None:
+    """把本地 Turnstile 挂载页注入指定地址，并等待官方脚本就绪。"""
+    page.route(
+        url,
+        lambda route: route.fulfill(
+            status=200, content_type="text/html", body=TURNSTILE_MOUNT_HTML
+        ),
+    )
+    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_function(
+        "() => typeof window.turnstile?.render === 'function'", timeout=30000
+    )
+
+
+class BrowserPageSession:
+    """常驻轻量反盾浏览器页：统一 stealth 上下文、资源拦截与人机验证交互。
+
+    浏览器对象只在会话线程内创建和使用（Playwright 同步 API 有线程亲和性），
+    调用方通过 :meth:`run` 提交自己的页面流程；代理变更或流程异常时自动重建会话。
+    """
+
+    def __init__(
+            self,
+            name: str,
+            proxy: Any = None,
+            timeout: int = 30,
+            prepare: Optional[Any] = None,
+    ) -> None:
+        self._name = str(name or "浏览器会话")
+        self._proxy = proxy
+        self._timeout = max(5, int(timeout or 30))
+        self._prepare = prepare
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"{self._name}-Browser"
+        )
+        self._context = None
+        self._page = None
+        self._current_proxy = None
+        self._generation = 0
+        self._lock = threading.RLock()
+
+    @property
+    def timeout_ms(self) -> int:
+        return max(5000, self._timeout * 1000)
+
+    @property
+    def page_generation(self) -> int:
+        """页面重建代数；调用方据此判断本次是否复用了既有会话。"""
+        with self._lock:
+            return self._generation
+
+    def click_challenge(self) -> bool:
+        """在会话线程内点击 Cloudflare / Turnstile 复选框。"""
+        page = self._page
+        if page is None:
+            return False
+        return click_challenge_frame(page)
+
+    def run(self, callback: Any, proxy: Any = None, wait_timeout: float = 0) -> Any:
+        """在会话线程内执行页面流程 ``callback(page)``。"""
+        target_proxy = self._proxy if proxy is None else proxy
+        budget = float(wait_timeout or 0) or (self._timeout + 60)
+        future = self._executor.submit(self._run, callback, target_proxy)
+        return future.result(timeout=budget)
+
+    def _run(self, callback: Any, proxy: Any) -> Any:
+        with self._lock:
+            page = self._ensure_page(proxy)
+            try:
+                return callback(page)
+            except Exception:
+                self._close_locked()
+                raise
+
+    def _ensure_page(self, proxy: Any):
+        if self._context is not None and self._current_proxy != proxy:
+            self._close_locked()
+        if self._page is not None and not self._page.is_closed():
+            return self._page
+
+        self._close_locked()
+        self._current_proxy = proxy
+        self._context = launch_challenge_context(proxy)
+        self._page = self._context.new_page()
+        try:
+            self._page.set_default_timeout(self.timeout_ms)
+        except Exception:
+            pass
+        block_heavy_resources(self._page)
+        self._generation += 1
+        if self._prepare is not None:
+            self._prepare(self._page)
+        return self._page
+
+    def _close_locked(self) -> None:
+        context, self._context = self._context, None
+        self._page = None
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        try:
+            self._executor.submit(self._close_locked).result(timeout=5)
+        except Exception:
+            pass
+
+
+def turnstile_page_token(
+        page,
+        site_key: str,
+        action: str,
+        *,
+        state_name: str,
+        label: str = "",
+        deadline: float = 45.0,
+        click_challenge: Optional[Any] = None,
+) -> str:
+    """在给定页面上渲染并执行 Turnstile，轮询取回一次性 token。
+
+    供已经在会话线程内持有页面的渠道直接调用（避免嵌套会话执行）。
+    """
+    tag = str(label or "Turnstile")
+    page.evaluate(
+        turnstile_render_script(state_name),
+        {"siteKey": site_key, "action": action},
+    )
+    clicked = False
+    end = time.monotonic() + max(5.0, float(deadline or 45.0))
+    while time.monotonic() < end:
+        state = page.evaluate(f"() => window.{state_name} || {{}}") or {}
+        token = str(state.get("token") or "")
+        if token:
+            page.evaluate(
+                "(name) => { try { const s = window[name];"
+                " if (s && s.widget !== undefined) window.turnstile.remove(s.widget); }"
+                " catch (e) {} window[name] = null; }",
+                state_name,
+            )
+            return token
+        error = str(state.get("error") or "")
+        if error:
+            raise RuntimeError(f"{tag} Cloudflare 验证失败：{error}")
+        if state.get("interactive") and not clicked and click_challenge is not None:
+            clicked = bool(click_challenge())
+        page.wait_for_timeout(200)
+    raise TimeoutError(f"{tag} Cloudflare 验证超过 {int(deadline)} 秒")
+
+
+def mint_turnstile_token(
+        session: BrowserPageSession,
+        site_key: str,
+        action: str,
+        *,
+        state_name: str,
+        label: str = "",
+        deadline: float = 45.0,
+        wait_timeout: float = 0,
+) -> str:
+    """在常驻浏览器会话中渲染并执行 Turnstile，返回一次性 token。"""
+    started = time.monotonic()
+    generation = session.page_generation
+    tag = str(label or "Turnstile")
+
+    def _flow(page) -> str:
+        token = turnstile_page_token(
+            page,
+            site_key,
+            action,
+            state_name=state_name,
+            label=tag,
+            deadline=deadline,
+            click_challenge=session.click_challenge,
+        )
+        logger.debug(
+            f"{tag} Turnstile 就绪：action={action}，"
+            f"复用={generation == session.page_generation}，"
+            f"耗时={time.monotonic() - started:.2f}s"
+        )
+        return token
+
+    return session.run(
+        _flow, wait_timeout=wait_timeout or (float(deadline or 45.0) + 30.0)
+    )
+
+
 def playwright_snapshot(url: str, proxy: Any, timeout: int, gate):
     """使用平台浏览器获取页面和同一浏览器会话的 Cookie/UA。"""
 
@@ -110,9 +357,6 @@ def playwright_snapshot(url: str, proxy: Any, timeout: int, gate):
         url=url, callback=snapshot, proxies=browser_proxy(proxy),
         headless=True, timeout=timeout,
     ))
-
-
-_CF_SOLVE_LOCK = threading.Lock()
 
 
 def is_cloudflare_response(response: Any) -> bool:
@@ -142,108 +386,69 @@ class CloudflareChallengeSolver:
     """复用常驻轻量浏览器，穿透 Cloudflare 质询盾并提取凭证与页面。"""
 
     def __init__(self):
-        self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="CF-Challenge-Pool"
-        )
-        self._context = None
-        self._page = None
-        self._current_proxy = None
-        self._user_agent = ""
-        self._lock = threading.RLock()
-
-    def _prepare_page(self, proxy: Any):
-        if self._context is not None and self._current_proxy != proxy:
-            self._close_browser()
-
-        if self._page is not None and not self._page.is_closed():
-            return self._page
-
-        self._close_browser()
-        self._current_proxy = proxy
-        self._context = launch_challenge_context(proxy)
-        self._page = self._context.new_page()
-        try:
-            self._user_agent = str(self._page.evaluate("navigator.userAgent") or "").strip()
-        except Exception:
-            self._user_agent = ""
-
-        # 静态资源请求拦截：过滤图片、多媒体、字体等无关资源，大幅降低网络开销与渲染耗时
-        def _route_filter(route):
-            try:
-                res_type = route.request.resource_type
-                if res_type in {"image", "media", "font"}:
-                    route.abort()
-                    return
-            except Exception:
-                pass
-            try:
-                route.continue_()
-            except Exception:
-                pass
-
-        try:
-            self._page.route("**/*", _route_filter)
-        except Exception:
-            pass
-
-        return self._page
+        self._session = BrowserPageSession("CF-Challenge", timeout=35)
 
     def _solve(self, url: str, proxy: Any, timeout: int) -> Optional[Dict[str, Any]]:
         started = time.monotonic()
         deadline = started + max(15, int(timeout or 35))
-        page = self._prepare_page(proxy)
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-        passed = False
-        while time.monotonic() < deadline:
-            try:
-                title = page.title()
-            except Exception:
-                page.wait_for_timeout(300)
-                continue
+        def _flow(page) -> Dict[str, Any]:
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            passed = False
+            while time.monotonic() < deadline:
+                try:
+                    title = page.title()
+                except Exception:
+                    page.wait_for_timeout(300)
+                    continue
 
-            title_lower = title.lower()
-            cookies = self._context.cookies()
-            has_cf = any(c.get("name") == "cf_clearance" for c in cookies)
+                title_lower = title.lower()
+                cookies = page.context.cookies()
+                has_cf = any(c.get("name") == "cf_clearance" for c in cookies)
 
-            if (
-                    has_cf
-                    and "just a moment" not in title_lower
-                    and "attention required" not in title_lower
-                    and len(title.strip()) > 0
-            ):
-                passed = True
-                break
+                if (
+                        has_cf
+                        and "just a moment" not in title_lower
+                        and "attention required" not in title_lower
+                        and len(title.strip()) > 0
+                ):
+                    passed = True
+                    break
 
-            click_challenge_frame(page)
-            page.wait_for_timeout(400)
+                self._session.click_challenge()
+                page.wait_for_timeout(400)
 
-        if not passed:
-            self._close_browser()
-            return None
+            if not passed:
+                raise TimeoutError("Cloudflare 质询未通过")
 
-        ua = self._user_agent
-        if not ua:
+            user_agent = ""
             for _ in range(5):
                 try:
-                    ua = str(page.evaluate("navigator.userAgent") or "").strip()
-                    if ua:
-                        self._user_agent = ua
-                        break
+                    user_agent = str(page.evaluate("navigator.userAgent") or "").strip()
                 except Exception:
-                    page.wait_for_timeout(200)
+                    user_agent = ""
+                if user_agent:
+                    break
+                page.wait_for_timeout(200)
 
-        content = ""
+            content = ""
+            try:
+                content = page.content() or ""
+            except Exception:
+                pass
+
+            return {
+                "cookies": page.context.cookies(),
+                "user_agent": user_agent,
+                "html": content,
+            }
+
         try:
-            content = page.content() or ""
+            return self._session.run(
+                _flow, proxy=proxy, wait_timeout=max(15, int(timeout or 35)) + 20
+            )
         except Exception:
-            pass
-
-        return {
-            "cookies": self._context.cookies(),
-            "user_agent": ua,
-            "html": content,
-        }
+            return None
 
     def solve(
             self, url: str, proxy: Any = None, timeout: int = 35
@@ -251,49 +456,22 @@ class CloudflareChallengeSolver:
         if launch_context is None:
             return None
         host = urlsplit(url).netloc or url
-        logger.info(f"Cloudflare: 检测到安全质询拦截 [{host}]，正在拉起反盾浏览器自动过盾...")
+        logger.debug(f"Cloudflare: 检测到安全质询拦截 [{host}]，正在拉起反盾浏览器自动过盾...")
         started = time.monotonic()
-        with self._lock:
-            try:
-                result = self._executor.submit(
-                    self._solve, url, proxy, timeout
-                ).result(timeout=timeout + 20)
-                elapsed = time.monotonic() - started
-                if result and result.get("cookies"):
-                    logger.info(
-                        f"Cloudflare: 自动过盾成功 [{host}]，已提取凭证与指纹（耗时 {elapsed:.2f}s）"
-                    )
-                else:
-                    logger.warning(
-                        f"Cloudflare: 自动过盾未通过或超时 [{host}]（耗时 {elapsed:.2f}s）"
-                    )
-                return result
-            except Exception as e:
-                elapsed = time.monotonic() - started
-                logger.warning(
-                    f"Cloudflare: 自动过盾异常 [{host}]：{e}（耗时 {elapsed:.2f}s）"
-                )
-                try:
-                    self._executor.submit(self._close_browser).result(timeout=5)
-                except Exception:
-                    pass
-                return None
-
-    def _close_browser(self) -> None:
-        context, self._context = self._context, None
-        self._page = None
-        self._user_agent = ""
-        if context is not None:
-            try:
-                context.close()
-            except Exception:
-                pass
+        result = self._solve(url, proxy, timeout)
+        elapsed = time.monotonic() - started
+        if result and result.get("cookies"):
+            logger.debug(
+                f"Cloudflare: 自动过盾成功 [{host}]，已提取凭证与指纹（耗时 {elapsed:.2f}s）"
+            )
+        else:
+            logger.debug(
+                f"Cloudflare: 自动过盾未通过或超时 [{host}]（耗时 {elapsed:.2f}s）"
+            )
+        return result
 
     def close(self) -> None:
-        try:
-            self._executor.submit(self._close_browser).result(timeout=5)
-        except Exception:
-            pass
+        self._session.close()
 
 
 _SOLVER_INSTANCE: Optional[CloudflareChallengeSolver] = None

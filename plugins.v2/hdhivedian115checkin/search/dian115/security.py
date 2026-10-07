@@ -2,12 +2,15 @@
 
 import base64
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 from app.log import logger
 
-from ..cloudflare import browser_proxy, click_challenge_frame, launch_challenge_context
+from ..cloudflare import (
+    BrowserPageSession,
+    mint_turnstile_token,
+    mount_turnstile_page,
+)
 
 _KEY_VERSION = 1
 _KEY_MASK = (55, 161, 92, 233)
@@ -16,99 +19,33 @@ _KEY_MASK = (55, 161, 92, 233)
 class Dian115Turnstile:
     """复用轻量浏览器，仅生成 Dian115 接口使用的一次性 Turnstile token。"""
 
-    _HTML = """<!doctype html><html><head><meta charset=\"utf-8\">
-    <script src=\"https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit\" defer></script>
-    </head><body><div id=\"verification\" style=\"margin:80px\"></div></body></html>"""
-    _START = """({siteKey, action}) => {
-        const previous = window.dian115Verification;
-        if (previous?.widget !== undefined) window.turnstile.remove(previous.widget);
-        const state = {token: '', error: '', interactive: false};
-        window.dian115Verification = state;
-        state.widget = window.turnstile.render('#verification', {
-            sitekey: siteKey, action, theme: 'light', language: 'zh-CN',
-            appearance: 'interaction-only', execution: 'execute',
-            'response-field': false,
-            callback: token => { state.token = token; },
-            'error-callback': code => { state.error = String(code || 'verification_failed'); },
-            'expired-callback': () => { state.error = 'token_expired'; },
-            'timeout-callback': () => { state.error = 'verification_timeout'; },
-            'before-interactive-callback': () => { state.interactive = true; }
-        });
-        window.turnstile.execute(state.widget);
-    }"""
+    _STATE_NAME = "dian115Verification"
 
     def __init__(self, base_url: str, proxy=None):
-        self._base_url = base_url.rstrip("/")
-        self._proxy = proxy
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Dian115-Turnstile")
-        self._context = None
-        self._page = None
+        self._base_url = str(base_url or "").rstrip("/")
+        self._session = BrowserPageSession(
+            "Dian115-Turnstile",
+            proxy=proxy,
+            timeout=30,
+            prepare=lambda page: mount_turnstile_page(
+                page, f"{self._base_url}/login"
+            ),
+        )
 
     def token(self, site_key: str, action: str) -> str:
         if action not in {"portal_login", "portal_unlock"} or not site_key:
             raise ValueError("Dian115 验证参数无效")
-        return self._executor.submit(self._token, site_key, action).result(timeout=30)
-
-    def _prepare_page(self) -> None:
-        if self._page is not None and not self._page.is_closed():
-            return
-        self._close_browser()
-        self._context = launch_challenge_context(self._proxy)
-        self._page = self._context.new_page()
-        url = f"{self._base_url}/login"
-        self._page.route(url, lambda route: route.fulfill(
-            status=200, content_type="text/html", body=self._HTML
-        ))
-        self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        self._page.wait_for_function(
-            "() => typeof window.turnstile?.render === 'function'", timeout=30000
+        return mint_turnstile_token(
+            self._session,
+            site_key,
+            action,
+            state_name=self._STATE_NAME,
+            label="Dian115",
+            deadline=60,
         )
 
-    def _token(self, site_key: str, action: str) -> str:
-        started = time.monotonic()
-        deadline = started + 60
-        reused = self._page is not None and not self._page.is_closed()
-        try:
-            self._prepare_page()
-            self._page.evaluate(self._START, {"siteKey": site_key, "action": action})
-            clicked = False
-            while time.monotonic() < deadline:
-                state = self._page.evaluate("() => window.dian115Verification")
-                if state.get("token"):
-                    token = str(state["token"])
-                    self._page.evaluate("""() => {
-                        window.turnstile.remove(window.dian115Verification.widget);
-                        window.dian115Verification = null;
-                    }""")
-                    logger.debug(
-                        f"Dian115 Turnstile 就绪：action={action}，复用={reused}，"
-                        f"耗时={time.monotonic() - started:.2f}s"
-                    )
-                    return token
-                if state.get("error"):
-                    raise RuntimeError(f"Cloudflare 验证失败：{state['error']}")
-                if state.get("interactive") and not clicked:
-                    clicked = click_challenge_frame(self._page)
-                self._page.wait_for_timeout(200)
-            raise TimeoutError("Cloudflare 验证超过 60 秒")
-        except Exception:
-            try:
-                self._close_browser()
-            except Exception as error:
-                logger.debug(f"Dian115 关闭验证浏览器失败：{type(error).__name__}")
-            raise
-
-    def _close_browser(self) -> None:
-        context, self._context = self._context, None
-        self._page = None
-        if context is not None:
-            context.close()
-
     def close(self) -> None:
-        try:
-            self._executor.submit(self._close_browser).result()
-        finally:
-            self._executor.shutdown(wait=True, cancel_futures=True)
+        self._session.close()
 
 
 def encode_resource_key(
@@ -160,7 +97,7 @@ def turnstile_token(client: Any, action: str, allow_browser: bool = True) -> Opt
         )
     try:
         if client._turnstile is None:
-            client._turnstile = Dian115Turnstile(client.base_url, browser_proxy(client._proxies))
+            client._turnstile = Dian115Turnstile(client.base_url, client._proxies)
         token = client._turnstile.token(site_key, action)
         if not token:
             raise RuntimeError("Cloudflare 未返回验证 token")
