@@ -1,9 +1,12 @@
 """搜索渠道共用的 Cloudflare 页面识别与浏览器操作。"""
 
+import os
+import shutil
+import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse, urlsplit
 
 from app.core.config import settings
@@ -387,6 +390,14 @@ class CloudflareChallengeSolver:
 
     def __init__(self):
         self._session = BrowserPageSession("CF-Challenge", timeout=35)
+        self._last_used = time.monotonic()
+
+    def close_if_idle(self, idle_seconds: float = 1800.0) -> bool:
+        """长时间未使用时释放常驻浏览器，避免空闲会话常驻占用内存。"""
+        if time.monotonic() - self._last_used < max(60.0, float(idle_seconds)):
+            return False
+        self._session.close()
+        return True
 
     def _solve(self, url: str, proxy: Any, timeout: int) -> Optional[Dict[str, Any]]:
         started = time.monotonic()
@@ -458,6 +469,7 @@ class CloudflareChallengeSolver:
         host = urlsplit(url).netloc or url
         logger.debug(f"Cloudflare: 检测到安全质询拦截 [{host}]，正在拉起反盾浏览器自动过盾...")
         started = time.monotonic()
+        self._last_used = started
         result = self._solve(url, proxy, timeout)
         elapsed = time.monotonic() - started
         if result and result.get("cookies"):
@@ -492,6 +504,95 @@ def solve_cloudflare_challenge(
 ) -> Optional[Dict[str, Any]]:
     """在常驻单例轻量浏览器池中穿透 Cloudflare 盾，提取 cookies、user_agent 与页面 HTML。"""
     return get_cloudflare_solver().solve(url, proxy=proxy, timeout=timeout)
+
+
+def close_cloudflare_solver() -> None:
+    """释放常驻过盾浏览器（插件停止时调用）。"""
+    global _SOLVER_INSTANCE
+    with _SOLVER_LOCK:
+        solver, _SOLVER_INSTANCE = _SOLVER_INSTANCE, None
+    if solver is None:
+        return
+    try:
+        solver.close()
+        logger.debug("已关闭反盾浏览器会话")
+    except Exception as error:
+        logger.warning(f"关闭反盾浏览器会话异常：{error}")
+
+
+def close_idle_cloudflare_solver(idle_seconds: float = 1800.0) -> bool:
+    """空闲反盾会话自动释放，返回是否发生了释放。"""
+    solver = _SOLVER_INSTANCE
+    if solver is None:
+        return False
+    try:
+        return bool(solver.close_if_idle(idle_seconds))
+    except Exception as error:
+        logger.debug(f"释放空闲反盾浏览器异常：{error}")
+        return False
+
+
+_STALE_PROFILE_PREFIX = "playwright_chromiumdev_profile-"
+_PROFILE_ROOT = "/tmp"
+
+
+def reap_stale_challenge_browsers(
+        idle_minutes: int = 30,
+        *,
+        proc_root: str = "/proc",
+        profile_root: str = _PROFILE_ROOT,
+        kill: Any = None,
+) -> int:
+    """兜底回收残留反盾浏览器：profile 静默超过阈值即终止进程并清理目录。
+
+    热重载会丢失旧会话引用，其 Chromium 进程常驻吃内存，需要独立于 Python 对象的清理。
+    """
+    if not os.path.isdir(proc_root):
+        return 0
+    kill = kill or os.kill
+    force_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
+    threshold = max(300.0, float(idle_minutes) * 60.0)
+    now = time.time()
+    stale: Dict[str, List[int]] = {}
+    for entry in os.listdir(proc_root):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(os.path.join(proc_root, entry, "cmdline"), "rb") as handle:
+                cmdline = handle.read().decode("utf-8", "ignore")
+        except OSError:
+            continue
+        marker = cmdline.find(_STALE_PROFILE_PREFIX)
+        if marker < 0:
+            continue
+        start = marker + len(_STALE_PROFILE_PREFIX)
+        end = start
+        while end < len(cmdline) and cmdline[end] not in "\x00\n /":
+            end += 1
+        profile = os.path.join(
+            profile_root, f"{_STALE_PROFILE_PREFIX}{cmdline[start:end]}"
+        )
+        try:
+            if now - os.path.getmtime(profile) < threshold:
+                continue
+        except OSError:
+            pass
+        stale.setdefault(profile, []).append(int(entry))
+
+    reaped = 0
+    for profile, pids in stale.items():
+        for pid in pids:
+            try:
+                kill(pid, force_signal)
+            except OSError:
+                continue
+        shutil.rmtree(profile, ignore_errors=True)
+        reaped += 1
+    if reaped:
+        logger.warning(
+            f"已回收 {reaped} 个残留反盾浏览器（静默超过 {int(idle_minutes)} 分钟）"
+        )
+    return reaped
 
 
 def bypass_cloudflare_session(

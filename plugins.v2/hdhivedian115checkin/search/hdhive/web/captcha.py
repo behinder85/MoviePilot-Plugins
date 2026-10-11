@@ -293,7 +293,7 @@ def _recover_mask(np, Image, frames, threshold: float, minimum: int):
     return word, confidence
 
 
-def _find_boundaries(np, mask):
+def _find_boundaries(mask):
     projection = mask[TEXT_TOP:TEXT_BOTTOM].sum(axis=0)
     boundaries = [TEXT_LEFT]
     for expected in SLOT_BOUNDARIES[1:-1]:
@@ -441,7 +441,7 @@ class HDHiveCaptchaRecognizer:
             float(bundle.get("threshold") or 0.025),
             int(bundle.get("min_component") or 18),
         )
-        boundaries = _find_boundaries(np, word)
+        boundaries = _find_boundaries(word)
         glyph_masks = _split_glyph_masks(np, word, boundaries)
         images = []
         for index, glyph_mask in enumerate(glyph_masks):
