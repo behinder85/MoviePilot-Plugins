@@ -3,29 +3,27 @@
     "name": "HDHive / Dian115 签到",
     "description": "仅保留上游 MoviePilot-Plugins 中 HDHive 与 Dian115 两个渠道的每日签到、转盘和通知功能。",
     "labels": "签到,HDHive,Dian115",
-    "version": "1.0.15",
-    "icon": "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/hdhivedian115checkin.png",
+    "version": "1.0.0",
+    "icon": "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/hdhive_dian115_checkin.png",
     "author": "odomu",
     "level": 1,
     "release": true,
     "system_version": ">=2.14.6",
     "history": {
-      "v1.0.15": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.14": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.13": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.12": "适配上游 checkin(mode=) 重构：签到入口按真实签名分发，积分字段由服务层折算，并新增客户端契约校验",
-      "v1.0.11": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.10": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.9": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.8": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.7": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.6": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.5": "同步上游 HDHive/Dian115 客户端代码",
-      "v1.0.4": "新增详情数据页（运行概览、渠道状态、签到记录、手动执行与刷新按钮）；HDHive 配置区分 WebAPI 与 OpenAPI，仅在 OpenAPI 模式下校验应用授权；HDHive/Dian115 均支持「保存后立即执行一次」",
-      "v1.0.3": "修复配置页无法使用：补齐 get_api/get_page 抽象方法，配置表单改用 V2 官方 Vuetify 组件规范并提供默认配置，运行期 Token 持久化改为合并写回",
-      "v1.0.2": "修复插件类缺少 get_api/get_page 抽象方法导致 MoviePilot 无法实例化、配置页报加载失败",
-      "v1.0.1": "按官方仓库规范修正插件目录名与索引编码，补充 Release 自动发布流程",
       "v1.0.0": "从 MoviePilot-Plugins 提取 HDHive 与 Dian115 签到能力并重新打包"
+    }
+  },
+  "CrossSeedRelocator": {
+    "name": "CrossSeed辅种路径回迁",
+    "description": "把 cross-seed 注入到链接目录的辅种，在 Transmission 中的保存路径回迁到原始下载路径，并去掉 cross-seed 标签、清理链接目录；无源（季包聚合/源已删除）原地保留并保留标签；支持定期清理链接目录中未做种的文件（默认仅预演）。",
+    "labels": "辅种,Transmission,cross-seed",
+    "version": "1.0.0",
+    "icon": "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/crossseed_relocator.svg",
+    "author": "zjuzxj",
+    "level": 1,
+    "system_version": ">=2.15.0",
+    "history": {
+      "v1.0.0": "首个版本：只读预演、目标路径推断、批量回迁与单条回滚、无源保留 cross-seed 标签、链接目录清理（默认预演）、Vue 联邦 UI 与 MoviePilot 通知"
     }
   }
 }
