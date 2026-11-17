@@ -5,3 +5,6 @@ __pycache__/
 .idea/
 .vscode/
 dist/
+# 插件前端构建产物必须随仓库分发：MoviePilot 按文件列表安装插件，不会在容器内构建前端
+!plugins.v2/*/frontend/dist/
+!plugins.v2/*/frontend/dist/**
