@@ -73,10 +73,206 @@ class CrossSeedRelocator(_PluginBase):
         return "vue", "frontend/dist/assets"
 
     def get_form(self) -> Tuple[Optional[List[dict]], Dict[str, Any]]:
-        return None, DEFAULT_CONFIG
+        """配置表单：VForm 组件树 + 默认数据结构。
+
+        默认数据结构与 engine/config.py 的 DEFAULT_CONFIG 保持一致。
+        本插件实际界面走 Vue 联邦组件（get_render_mode=vue），此表单作为回退。
+        """
+        form = [
+            {
+                "component": "VForm",
+                "content": [
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 6},
+                                "content": [
+                                {"component": "VSwitch", "props": {"model":"enabled","label":"启用插件"}},
+                                {"component": "VTextField", "props": {"model":"cron","label":"cron 表达式（5 段）","placeholder":"0 3 */7 * *","hint":"默认每月 1/8/15/22/29 日 03:00 执行"}},
+                                {"component": "VSelect", "props": {"model": "apply_mode", "label": "定时任务动作", "items": [
+                                    {"title": "仅预演（只出报告）", "value": "preview"},
+                                    {"title": "实际执行（改路径/去标签）", "value": "apply"},
+                                ]}},
+                                {"component": "VTextField", "props": {"model":"cs_root","label":"cross-seed 链接根目录"}},
+                                {"component": "VTextarea", "props": {"model":"path_priority","label":"目标路径优先级（每行一个，自上而下）","rows":3}},
+                                {"component": "VTextarea", "props": {"model":"path_exclude","label":"排除目录（每行一个，绝不作为目标）","rows":2}},
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 6},
+                                "content": [
+                                {"component": "VTextField", "props": {"model":"tr_name","label":"下载器名称（留空自动选择）"}},
+                                {"component": "VTextField", "props": {"model":"single_timeout_min","label":"单种子校验超时（分钟）","type":"number"}},
+                                {"component": "VSwitch", "props": {"model":"keep_label_on_no_source","label":"无源时保留 cross-seed 标签"}},
+                                {"component": "VSwitch", "props": {"model":"cleanup_enabled","label":"启用链接目录清理"}},
+                                {"component": "VSwitch", "props": {"model":"cleanup_dry_run","label":"清理仅预演"}},
+                                {"component": "VTextField", "props": {"model":"cleanup_min_age_hours","label":"清理最小文件年龄（小时）","type":"number"}},
+                                ],
+                            },
+                        ],
+                    },
+                    {"component": "VDivider", "props": {"class": "my-4"}},
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [
+                                {"component": "VTextField", "props": {"model":"cap_count","label":"单轮上限：数量","type":"number","hint":"0 = 不限"}},
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [
+                                {"component": "VTextField", "props": {"model":"cap_size_gb","label":"单轮上限：体积 GB","type":"number","hint":"0 = 不限"}},
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [
+                                {"component": "VTextField", "props": {"model":"cap_minutes","label":"单轮上限：分钟","type":"number","hint":"0 = 不限"}},
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [
+                                {"component": "VSwitch", "props": {"model":"notify_success","label":"通知：成功"}},
+                                {"component": "VSwitch", "props": {"model":"notify_failure","label":"通知：失败"}},
+                                {"component": "VSwitch", "props": {"model":"notify_rollback","label":"通知：回滚"}},
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ]
+        model = {
+            "enabled": True,
+            "cron": "0 3 */7 * *",
+            "cs_root": "/机械/Cross-Seek",
+            "apply_mode": "preview",
+            "path_priority": "/机械/download\n/机械/不可说保种",
+            "path_exclude": "/机械/刷流",
+            "cap_count": 0,
+            "cap_size_gb": 0,
+            "cap_minutes": 0,
+            "single_timeout_min": 60,
+            "keep_label_on_no_source": True,
+            "cleanup_enabled": False,
+            "cleanup_dry_run": True,
+            "cleanup_min_age_hours": 12,
+            "notify_success": True,
+            "notify_failure": True,
+            "notify_rollback": True,
+            "tr_name": "",
+        }
+        if set(model) != set(DEFAULT_CONFIG):
+            logger.warning("【CrossSeedRelocator】get_form 默认数据结构与 DEFAULT_CONFIG 不一致")
+        return form, model
 
     def get_page(self) -> Optional[List[dict]]:
-        return None
+        """插件详情页：只读概览。写操作在侧边栏「辅种路径回迁」Vue 页面执行。"""
+        try:
+            return [self._page_overview()]
+        except Exception as error:  # noqa: BLE001
+            logger.error("【CrossSeedRelocator】详情页生成失败：%s" % error)
+            return [
+                {
+                    "component": "VAlert",
+                    "props": {
+                        "type": "error",
+                        "variant": "tonal",
+                        "text": "详情页数据生成失败：%s" % error,
+                    },
+                }
+            ]
+
+    def _page_overview(self) -> dict:
+        """生成详情页卡片（组件节点结构，供 MoviePilot 经典页面渲染）。"""
+        conf = self._conf or {}
+        journal = self._journal()
+        last = journal.last_run() or {}
+        stats = last.get("stats") or {}
+        entries = journal.entries() or {}
+        success = len([1 for item in entries.values() if item.get("status") == "success"])
+        failed = len([1 for item in entries.values() if item.get("status") == "failed"])
+        no_source = len(journal.data().get("no_source") or {})
+        if stats:
+            last_summary = "种子 %d / 待回迁 %d / 可回迁 %d / 无源 %d / 等待校验 %d" % (
+                stats.get("torrents", 0),
+                stats.get("targets", 0),
+                stats.get("ready", 0),
+                stats.get("no_source", 0),
+                stats.get("waiting", 0),
+            )
+        else:
+            last_summary = "暂无记录"
+        rows = [
+            ("插件状态", "已启用" if self._enabled else "已停用"),
+            ("定时任务动作", "实际执行" if conf.get("apply_mode") == "apply" else "仅预演"),
+            ("cron 表达式", conf.get("cron") or "-"),
+            ("cross-seed 链接根目录", conf.get("cs_root") or "-"),
+            ("下载器", conf.get("tr_name") or "自动选择第一个启用的 Transmission"),
+            ("上次执行", last.get("finished_at") or last.get("started_at") or "暂无记录"),
+            ("上次概览", last_summary),
+            ("累计回迁成功", str(success)),
+            ("累计失败", str(failed)),
+            ("无源保留（CS 专属）", str(no_source)),
+        ]
+        return {
+            "component": "VCard",
+            "props": {
+                "variant": "flat",
+                "class": "mb-4 elevation-2",
+                "style": "border-radius: 16px;",
+            },
+            "content": [
+                {
+                    "component": "VCardItem",
+                    "props": {"class": "pa-6 pb-0"},
+                    "content": [
+                        {
+                            "component": "VCardTitle",
+                            "props": {"class": "d-flex align-center text-h6"},
+                            "content": [
+                                {"component": "VIcon", "props": {"color": "primary", "class": "mr-3"}, "text": "mdi-swap-horizontal-bold"},
+                                {"component": "span", "text": "CrossSeed辅种路径回迁"},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "component": "VCardText",
+                    "props": {"class": "pa-6"},
+                    "content": [
+                        {
+                            "component": "VAlert",
+                            "props": {
+                                "type": "info",
+                                "variant": "tonal",
+                                "class": "mb-4",
+                                "text": "路径回迁、清理与回滚等写操作在侧边栏「辅种路径回迁」页面执行，本页只读。",
+                            },
+                        },
+                        {
+                            "component": "VList",
+                            "props": {"lines": "two"},
+                            "content": [
+                                {"component": "VListItem", "props": {"title": str(key), "subtitle": str(value)}}
+                                for key, value in rows
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
 
     def get_sidebar_nav(self) -> List[dict]:
         return [
