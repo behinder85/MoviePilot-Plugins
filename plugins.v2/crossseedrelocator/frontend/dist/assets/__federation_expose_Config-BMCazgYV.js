@@ -8,6 +8,7 @@ const _hoisted_1 = { class: "d-flex align-center mb-3" };
 
 const {computed,onMounted,reactive,ref,watch} = await importShared('vue');
 
+const VERSION = '1.1.1';
 
 const _sfc_main = {
   __name: 'Config',
@@ -132,6 +133,7 @@ return (_ctx, _cache) => {
   const _component_v_alert = _resolveComponent("v-alert");
   const _component_v_row = _resolveComponent("v-row");
   const _component_v_textarea = _resolveComponent("v-textarea");
+  const _component_v_divider = _resolveComponent("v-divider");
   const _component_v_card_text = _resolveComponent("v-card-text");
   const _component_v_card_actions = _resolveComponent("v-card-actions");
 
@@ -149,8 +151,19 @@ return (_ctx, _cache) => {
           _createVNode(_component_v_spacer),
           _createVNode(_component_v_chip, {
             size: "small",
+            variant: "tonal",
+            class: "ml-2"
+          }, {
+            default: _withCtx(() => [
+              _createTextVNode("v" + _toDisplayString(VERSION))
+            ]),
+            _: 1
+          }),
+          _createVNode(_component_v_chip, {
+            size: "small",
             color: config.enabled ? 'success' : 'grey',
-            variant: "flat"
+            variant: "flat",
+            class: "ml-2"
           }, {
             default: _withCtx(() => [
               _createTextVNode(_toDisplayString(config.enabled ? '已启用' : '已停用'), 1)
@@ -315,76 +328,45 @@ return (_ctx, _cache) => {
                   }, {
                     default: _withCtx(() => [
                       _cache[25] || (_cache[25] = _createElementVNode("div", { class: "text-subtitle-2 mb-3" }, "路径规则", -1)),
-                      _createVNode(_component_v_row, { dense: "" }, {
-                        default: _withCtx(() => [
-                          _createVNode(_component_v_col, { cols: "12" }, {
-                            default: _withCtx(() => [
-                              _createVNode(_component_v_text_field, {
-                                modelValue: config.cs_root,
-                                "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => ((config.cs_root) = $event)),
-                                label: "cross-seed 链接根目录",
-                                density: "compact",
-                                hint: "Transmission 中 downloadDir 落在这个目录下的种子才会被当作待回迁对象",
-                                "persistent-hint": ""
-                              }, null, 8, ["modelValue"])
-                            ]),
-                            _: 1
-                          }),
-                          _createVNode(_component_v_col, {
-                            cols: "12",
-                            md: "6"
-                          }, {
-                            default: _withCtx(() => [
-                              _createVNode(_component_v_textarea, {
-                                modelValue: config.path_priority,
-                                "onUpdate:modelValue": _cache[6] || (_cache[6] = $event => ((config.path_priority) = $event)),
-                                label: "目标路径优先级（每行一个，自上而下）",
-                                rows: "5",
-                                "auto-grow": "",
-                                density: "compact",
-                                class: "mt-2",
-                                hint: "回迁目标必须落在这些前缀下；越靠前优先级越高",
-                                "persistent-hint": ""
-                              }, null, 8, ["modelValue"])
-                            ]),
-                            _: 1
-                          }),
-                          _createVNode(_component_v_col, {
-                            cols: "12",
-                            md: "6"
-                          }, {
-                            default: _withCtx(() => [
-                              _createVNode(_component_v_textarea, {
-                                modelValue: config.path_exclude,
-                                "onUpdate:modelValue": _cache[7] || (_cache[7] = $event => ((config.path_exclude) = $event)),
-                                label: "排除目录（每行一个，绝不作为目标）",
-                                rows: "5",
-                                "auto-grow": "",
-                                density: "compact",
-                                class: "mt-2",
-                                hint: "例如刷流目录：源种子保存路径命中这些前缀时不会被选为目标",
-                                "persistent-hint": ""
-                              }, null, 8, ["modelValue"])
-                            ]),
-                            _: 1
-                          }),
-                          _createVNode(_component_v_col, { cols: "12" }, {
-                            default: _withCtx(() => [
-                              _createVNode(_component_v_switch, {
-                                modelValue: config.keep_label_on_no_source,
-                                "onUpdate:modelValue": _cache[8] || (_cache[8] = $event => ((config.keep_label_on_no_source) = $event)),
-                                label: "无源时保留 cross-seed 标签（标记为 CS 专属数据）",
-                                density: "compact",
-                                "hide-details": "",
-                                color: "primary",
-                                class: "mt-2"
-                              }, null, 8, ["modelValue"])
-                            ]),
-                            _: 1
-                          })
-                        ]),
-                        _: 1
-                      })
+                      _createVNode(_component_v_text_field, {
+                        modelValue: config.cs_root,
+                        "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => ((config.cs_root) = $event)),
+                        label: "cross-seed 链接根目录",
+                        density: "compact",
+                        hint: "Transmission 中 downloadDir 落在这个目录下的种子才会被当作待回迁对象",
+                        "persistent-hint": ""
+                      }, null, 8, ["modelValue"]),
+                      _createVNode(_component_v_textarea, {
+                        modelValue: config.path_priority,
+                        "onUpdate:modelValue": _cache[6] || (_cache[6] = $event => ((config.path_priority) = $event)),
+                        label: "目标路径优先级（每行一个，自上而下）",
+                        rows: "4",
+                        "auto-grow": "",
+                        density: "compact",
+                        class: "mt-6",
+                        hint: "回迁目标必须落在这些前缀下；越靠前优先级越高",
+                        "persistent-hint": ""
+                      }, null, 8, ["modelValue"]),
+                      _createVNode(_component_v_textarea, {
+                        modelValue: config.path_exclude,
+                        "onUpdate:modelValue": _cache[7] || (_cache[7] = $event => ((config.path_exclude) = $event)),
+                        label: "排除目录（每行一个，绝不作为目标）",
+                        rows: "4",
+                        "auto-grow": "",
+                        density: "compact",
+                        class: "mt-6",
+                        hint: "例如刷流目录：源种子保存路径命中这些前缀时不会被选为目标",
+                        "persistent-hint": ""
+                      }, null, 8, ["modelValue"]),
+                      _createVNode(_component_v_divider, { class: "my-4" }),
+                      _createVNode(_component_v_switch, {
+                        modelValue: config.keep_label_on_no_source,
+                        "onUpdate:modelValue": _cache[8] || (_cache[8] = $event => ((config.keep_label_on_no_source) = $event)),
+                        label: "无源时保留 cross-seed 标签（标记为 CS 专属数据）",
+                        density: "compact",
+                        "hide-details": "",
+                        color: "primary"
+                      }, null, 8, ["modelValue"])
                     ]),
                     _: 1
                   })
@@ -565,7 +547,8 @@ return (_ctx, _cache) => {
               })
             ]),
             _: 1
-          })
+          }),
+          _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-3" }, " 前端版本 v" + _toDisplayString(VERSION) + "。若此处版本号与插件版本不一致，说明浏览器缓存了旧前端，请按 Ctrl+F5 强制刷新。 ")
         ]),
         _: 1
       }),

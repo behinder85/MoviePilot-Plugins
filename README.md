@@ -82,3 +82,13 @@ git push -u origin main
 ```
 
 同时请把 `package.v2.json` 和 `plugins.v2/hdhive_dian115_checkin/__init__.py` 中的 `behinder85/MoviePilot-Plugins` 替换为真实地址。
+
+## 发版（Release 安装）
+
+`CrossSeedRelocator` 在 `package.v2.json` 中声明了 `"release": true`，升级时 MoviePilot 会优先从 GitHub Release 下载资产安装（比逐文件拉取更稳）。每次发版请：
+
+1. 推送代码后，在 GitHub 创建 Release，tag 填 `CrossSeedRelocator_v<版本号>`（例如 `CrossSeedRelocator_v1.1.1`）；
+2. 上传资产文件 `crossseedrelocator_v<版本号>.zip`（文件名全小写）；
+3. zip 根目录直接放插件文件：`__init__.py`、`engine/`、`frontend/dist/`、`README.md`。
+
+Release 尚未就绪时插件仍会回退到文件列表安装，不会装不上。

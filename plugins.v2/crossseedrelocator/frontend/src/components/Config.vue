@@ -4,7 +4,8 @@
       <v-icon class="mr-2">mdi-swap-horizontal-bold</v-icon>
       {{ pluginName }}
       <v-spacer />
-      <v-chip size="small" :color="config.enabled ? 'success' : 'grey'" variant="flat">
+      <v-chip size="small" variant="tonal" class="ml-2">v{{ VERSION }}</v-chip>
+      <v-chip size="small" :color="config.enabled ? 'success' : 'grey'" variant="flat" class="ml-2">
         {{ config.enabled ? '已启用' : '已停用' }}
       </v-chip>
     </v-card-title>
@@ -56,27 +57,18 @@
         <v-col cols="12">
           <v-card variant="outlined" class="pa-4">
             <div class="text-subtitle-2 mb-3">路径规则</div>
-            <v-row dense>
-              <v-col cols="12">
-                <v-text-field v-model="config.cs_root" label="cross-seed 链接根目录" density="compact"
-                  hint="Transmission 中 downloadDir 落在这个目录下的种子才会被当作待回迁对象"
-                  persistent-hint />
-              </v-col>
-              <v-col cols="12" md="6">
-                <v-textarea v-model="config.path_priority" label="目标路径优先级（每行一个，自上而下）" rows="5"
-                  auto-grow density="compact" class="mt-2"
-                  hint="回迁目标必须落在这些前缀下；越靠前优先级越高" persistent-hint />
-              </v-col>
-              <v-col cols="12" md="6">
-                <v-textarea v-model="config.path_exclude" label="排除目录（每行一个，绝不作为目标）" rows="5"
-                  auto-grow density="compact" class="mt-2"
-                  hint="例如刷流目录：源种子保存路径命中这些前缀时不会被选为目标" persistent-hint />
-              </v-col>
-              <v-col cols="12">
-                <v-switch v-model="config.keep_label_on_no_source" label="无源时保留 cross-seed 标签（标记为 CS 专属数据）"
-                  density="compact" hide-details color="primary" class="mt-2" />
-              </v-col>
-            </v-row>
+            <v-text-field v-model="config.cs_root" label="cross-seed 链接根目录" density="compact"
+              hint="Transmission 中 downloadDir 落在这个目录下的种子才会被当作待回迁对象"
+              persistent-hint />
+            <v-textarea v-model="config.path_priority" label="目标路径优先级（每行一个，自上而下）" rows="4" auto-grow
+              density="compact" class="mt-6"
+              hint="回迁目标必须落在这些前缀下；越靠前优先级越高" persistent-hint />
+            <v-textarea v-model="config.path_exclude" label="排除目录（每行一个，绝不作为目标）" rows="4" auto-grow
+              density="compact" class="mt-6"
+              hint="例如刷流目录：源种子保存路径命中这些前缀时不会被选为目标" persistent-hint />
+            <v-divider class="my-4" />
+            <v-switch v-model="config.keep_label_on_no_source" label="无源时保留 cross-seed 标签（标记为 CS 专属数据）"
+              density="compact" hide-details color="primary" />
           </v-card>
         </v-col>
       </v-row>
@@ -119,6 +111,9 @@
           </v-card>
         </v-col>
       </v-row>
+      <div class="text-caption text-medium-emphasis mt-3">
+        前端版本 v{{ VERSION }}。若此处版本号与插件版本不一致，说明浏览器缓存了旧前端，请按 Ctrl+F5 强制刷新。
+      </div>
     </v-card-text>
 
     <v-card-actions>
@@ -142,6 +137,7 @@ const emit = defineEmits(['save', 'close', 'switch'])
 
 const client = usePluginApi(props)
 const pluginName = computed(() => 'CrossSeed辅种路径回迁')
+const VERSION = '1.1.1'
 const saving = ref(false)
 const applyModes = [
   { title: '仅预演（只出报告）', value: 'preview' },

@@ -22,3 +22,4 @@ Transmission 连接复用 MoviePilot「设置 → 下载器」里已配置的下
 
 - 回迁使用 Transmission `torrent-set-location`（会触发一次校验，属正常现象，日增辅种量通常为个位数）；
 - 前端为 Vue 联邦模式（`frontend/dist/assets`），无需额外构建即可安装。
+- 插件声明 `release: true`：升级时 MoviePilot 优先下载 `CrossSeedRelocator_v<版本>` Release 中的 `crossseedrelocator_v<版本>.zip` 安装，比逐文件拉取更稳；Release 缺失时自动回退文件列表安装。

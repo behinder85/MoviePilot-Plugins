@@ -28,7 +28,7 @@ class CrossSeedRelocator(_PluginBase):
     plugin_name = "CrossSeed辅种路径回迁"
     plugin_desc = "把 cross-seed 注入的辅种在 Transmission 中的保存路径回迁到原始下载路径，清理链接目录与未做种文件。"
     plugin_icon = "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/crossseed_relocator.svg"
-    plugin_version = "1.1.0"
+    plugin_version = "1.1.1"
     plugin_author = "zjuzxj"
     author_url = ""
     plugin_config_prefix = "crossseedrelocator_"
