@@ -8,7 +8,7 @@ const _hoisted_1 = { class: "d-flex align-center mb-3" };
 
 const {computed,onMounted,reactive,ref,watch} = await importShared('vue');
 
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 
 const _sfc_main = {
   __name: 'Config',

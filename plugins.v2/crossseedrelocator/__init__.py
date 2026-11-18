@@ -28,7 +28,7 @@ class CrossSeedRelocator(_PluginBase):
     plugin_name = "CrossSeed辅种路径回迁"
     plugin_desc = "把 cross-seed 注入的辅种在 Transmission 中的保存路径回迁到原始下载路径，清理链接目录与未做种文件。"
     plugin_icon = "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/crossseed_relocator.svg"
-    plugin_version = "1.1.1"
+    plugin_version = "1.1.2"
     plugin_author = "zjuzxj"
     author_url = ""
     plugin_config_prefix = "crossseedrelocator_"
@@ -465,60 +465,70 @@ class CrossSeedRelocator(_PluginBase):
                 "path": "/status",
                 "endpoint": self.api_status,
                 "methods": ["GET"],
+                "auth": "bear",
                 "summary": "获取插件状态",
             },
             {
                 "path": "/preview",
                 "endpoint": self.api_preview,
                 "methods": ["POST"],
+                "auth": "bear",
                 "summary": "预演：只推断目标路径，不写任何数据",
             },
             {
                 "path": "/run",
                 "endpoint": self.api_run,
                 "methods": ["POST"],
+                "auth": "bear",
                 "summary": "执行回迁（可指定是否同时清理）",
             },
             {
                 "path": "/rollback",
                 "endpoint": self.api_rollback,
                 "methods": ["POST"],
+                "auth": "bear",
                 "summary": "回滚已回迁的种子",
             },
             {
                 "path": "/journal",
                 "endpoint": self.api_journal,
                 "methods": ["GET"],
+                "auth": "bear",
                 "summary": "获取处理记录",
             },
             {
                 "path": "/logs",
                 "endpoint": self.api_logs,
                 "methods": ["GET"],
+                "auth": "bear",
                 "summary": "获取插件日志",
             },
             {
                 "path": "/cleanup_preview",
                 "endpoint": self.api_cleanup_preview,
                 "methods": ["POST"],
+                "auth": "bear",
                 "summary": "预演清理链接目录",
             },
             {
                 "path": "/cleanup_run",
                 "endpoint": self.api_cleanup_run,
                 "methods": ["POST"],
+                "auth": "bear",
                 "summary": "执行清理链接目录",
             },
             {
                 "path": "/test",
                 "endpoint": self.api_test,
                 "methods": ["POST"],
+                "auth": "bear",
                 "summary": "测试 Transmission 连接",
             },
             {
                 "path": "/downloaders",
                 "endpoint": self.api_downloaders,
                 "methods": ["GET"],
+                "auth": "bear",
                 "summary": "列出 MoviePilot 已配置的下载器",
             },
         ]

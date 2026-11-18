@@ -137,7 +137,7 @@ const emit = defineEmits(['save', 'close', 'switch'])
 
 const client = usePluginApi(props)
 const pluginName = computed(() => 'CrossSeed辅种路径回迁')
-const VERSION = '1.1.1'
+const VERSION = '1.1.2'
 const saving = ref(false)
 const applyModes = [
   { title: '仅预演（只出报告）', value: 'preview' },
