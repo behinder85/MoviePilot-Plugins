@@ -28,7 +28,7 @@ class CrossSeedRelocator(_PluginBase):
     plugin_name = "CrossSeed辅种路径回迁"
     plugin_desc = "把 cross-seed 注入的辅种在 Transmission 中的保存路径回迁到原始下载路径，清理链接目录与未做种文件。"
     plugin_icon = "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/crossseed_relocator.svg"
-    plugin_version = "1.0.0"
+    plugin_version = "1.1.0"
     plugin_author = "zjuzxj"
     author_url = ""
     plugin_config_prefix = "crossseedrelocator_"
@@ -319,6 +319,12 @@ class CrossSeedRelocator(_PluginBase):
                 "methods": ["POST"],
                 "summary": "测试 Transmission 连接",
             },
+            {
+                "path": "/downloaders",
+                "endpoint": self.api_downloaders,
+                "methods": ["GET"],
+                "summary": "列出 MoviePilot 已配置的下载器",
+            },
         ]
 
     def api_status(self) -> Dict[str, Any]:
@@ -451,6 +457,62 @@ class CrossSeedRelocator(_PluginBase):
             return {"mode": "cleanup", "cleanup": report, "moved": [], "failed": []}
 
         return self._start_job("cleanup", _work)
+
+    def api_downloaders(self) -> Dict[str, Any]:
+        """列出 MoviePilot 中已配置的下载器，供配置页下拉选择。"""
+        items: List[Dict[str, Any]] = []
+        source = ""
+        try:
+            from app.helper.service import ServiceConfigHelper  # type: ignore
+
+            for conf in ServiceConfigHelper.get_downloader_configs():
+                items.append(
+                    {
+                        "name": str(getattr(conf, "name", "") or ""),
+                        "type": str(getattr(conf, "type", "") or ""),
+                        "enabled": bool(getattr(conf, "enabled", False)),
+                        "host": str(getattr(conf, "host", "") or ""),
+                        "port": getattr(conf, "port", None),
+                    }
+                )
+            source = "ServiceConfigHelper"
+        except Exception as err:  # noqa: BLE001
+            logger.warning("【CrossSeedRelocator】ServiceConfigHelper 读取下载器失败（%s），改用 DownloaderHelper" % err)
+            try:
+                from app.helper.downloader import DownloaderHelper  # type: ignore
+
+                configs = DownloaderHelper().get_configs(include_disabled=True) or {}
+                for name, conf in configs.items():
+                    items.append(
+                        {
+                            "name": str(name or getattr(conf, "name", "") or ""),
+                            "type": str(getattr(conf, "type", "") or ""),
+                            "enabled": bool(getattr(conf, "enabled", True)),
+                            "host": str(getattr(conf, "host", "") or ""),
+                            "port": getattr(conf, "port", None),
+                        }
+                    )
+                source = "DownloaderHelper"
+            except Exception as err2:  # noqa: BLE001
+                return {
+                    "ok": False,
+                    "items": [],
+                    "message": "读取下载器配置失败：%s" % err2,
+                }
+        items = [item for item in items if item.get("name")]
+        items.sort(
+            key=lambda item: (
+                item.get("type") != "transmission",
+                not item.get("enabled"),
+                str(item.get("name") or ""),
+            )
+        )
+        suggested = ""
+        for item in items:
+            if item.get("type") == "transmission" and item.get("enabled"):
+                suggested = item["name"]
+                break
+        return {"ok": True, "items": items, "suggested": suggested, "source": source}
 
     def api_test(self) -> Dict[str, Any]:
         try:

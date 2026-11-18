@@ -17,12 +17,13 @@
     "name": "CrossSeed辅种路径回迁",
     "description": "把 cross-seed 注入到链接目录的辅种，在 Transmission 中的保存路径回迁到原始下载路径，并去掉 cross-seed 标签、清理链接目录；无源（季包聚合/源已删除）原地保留并保留标签；支持定期清理链接目录中未做种的文件（默认仅预演）。",
     "labels": "辅种,Transmission,cross-seed",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "icon": "https://raw.githubusercontent.com/behinder85/MoviePilot-Plugins/main/icons/crossseed_relocator.svg",
     "author": "zjuzxj",
     "level": 1,
     "system_version": ">=2.15.0",
     "history": {
+      "v1.1.0": "下载器改为从 MoviePilot 已配置的下载器下拉选择（无需手填配置名）；路径规则改为整行分栏布局不再拥挤；单种子校验超时默认 60 分钟并补充说明",
       "v1.0.0": "首个版本：只读预演、目标路径推断、批量回迁与单条回滚、无源保留 cross-seed 标签、链接目录清理（默认预演）、Vue 联邦 UI 与 MoviePilot 通知"
     }
   }

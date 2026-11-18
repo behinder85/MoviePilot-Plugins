@@ -19,7 +19,9 @@ DEFAULT_CONFIG = {
     "cap_size_gb": 0,
     "cap_minutes": 0,
     # 单个种子校验（recheck）等待超时，分钟
-    "single_timeout_min": 30,
+    # 改路径后 TR 会重新校验该种子；超过这个时间还没校验完并恢复做种就判失败并回滚。
+    # 太小 → 大种子被误判失败；太大 → 卡死的种子会拖长整轮（可用 cap_minutes 兜底）
+    "single_timeout_min": 60,
     # 找不到源（季包聚合/源已删除）时保留 cross-seed 标签作为标记
     "keep_label_on_no_source": True,
     # 未做种文件清理
